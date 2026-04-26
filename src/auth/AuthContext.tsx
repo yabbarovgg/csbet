@@ -18,8 +18,9 @@ interface AuthContextType {
   loading: boolean;
   login: (password: string) => Promise<void>;
   logout: () => void;
-  updateBalance: (newBalance: number | ((prev: number) => number)) => Promise<void>;
-  updateHistory: (newHistory: any[] | ((prev: any[]) => any[])) => Promise<void>;
+  updateBalance: (newBalance: number) => Promise<void>;
+  addToHistory: (bet: any) => Promise<void>;
+  updateBetStatus: (betId: string, status: 'won' | 'lost') => Promise<void>;
   setAvatar: (avatarUrl: string) => Promise<void>;
 }
 
@@ -87,43 +88,63 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsAuthenticated(false);
   };
 
-  // 🔹 Поддержка числа или функции для баланса
-  const updateBalance = async (newBalance: number | ((prev: number) => number)) => {
-    if (!user) return;
-    const bal = typeof newBalance === 'function' ? newBalance(user.balance) : newBalance;
-    setUser(prev => prev ? { ...prev, balance: bal } : null);
-    
-    const { error } = await supabase
-      .from('users')
-      .update({ balance: bal })
-      .eq('id', 'admin');
-    if (error) console.error('❌ Ошибка обновления баланса:', error);
+  // 🔹 Простое обновление баланса
+  const updateBalance = async (newBalance: number) => {
+    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
+    await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
   };
 
-  // 🔹 Поддержка массива или функции для истории
-  const updateHistory = async (newHistory: any[] | ((prev: any[]) => any[])) => {
-    if (!user) return;
-    const historyArray = typeof newHistory === 'function' ? newHistory(user.history || []) : newHistory;
-    setUser(prev => prev ? { ...prev, history: historyArray } : null);
-    
-    const { error } = await supabase
+  // 🔹 Добавление ставки в историю (читаем текущую из БД)
+  const addToHistory = async (bet: any) => {
+    // Читаем актуальную историю из БД
+    const {  currentData } = await supabase
       .from('users')
-      .update({ history: historyArray })
-      .eq('id', 'admin');
-    if (error) console.error('❌ Ошибка сохранения истории:', error);
+      .select('history')
+      .eq('id', 'admin')
+      .single();
+    
+    const currentHistory = currentData?.history || [];
+    const newHistory = [bet, ...currentHistory];
+    
+    // Обновляем локально и в БД
+    setUser(prev => prev ? { ...prev, history: newHistory } : null);
+    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
+  // 🔹 Обновление статуса ставки
+  const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
+    const {  currentData } = await supabase
+      .from('users')
+      .select('history')
+      .eq('id', 'admin')
+      .single();
+    
+    const currentHistory = currentData?.history || [];
+    const updatedHistory = currentHistory.map((b: any) => 
+      b.id === betId ? { ...b, status } : b
+    );
+    
+    setUser(prev => prev ? { ...prev, history: updatedHistory } : null);
+    await supabase.from('users').update({ history: updatedHistory }).eq('id', 'admin');
+  };
+
+  // 🔹 Быстрое сохранение аватарки (оптимистичное)
   const setAvatar = async (avatarUrl: string) => {
     if (!user) return;
-    try {
-      const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
-      setUser(prev => prev ? { ...prev, settings: newSettings } : null);
-      const { error } = await supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
-      if (error) throw error;
-    } catch (err) {
-      console.error('❌ Ошибка сохранения аватарки:', err);
-      setUser(prev => prev || null);
-    }
+    
+    // Сразу обновляем UI
+    const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
+    setUser(prev => prev ? { ...prev, settings: newSettings } : null);
+    
+    // Сохраняем в фоне (не ждём)
+    supabase.from('users').update({ settings: newSettings }).eq('id', 'admin')
+      .then(({ error }) => {
+        if (error) {
+          console.error('❌ Ошибка сохранения аватарки:', error);
+          // Откат при ошибке
+          setUser(prev => prev || null);
+        }
+      });
   };
 
   return (
@@ -134,7 +155,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       login, 
       logout,
       updateBalance, 
-      updateHistory,
+      addToHistory,
+      updateBetStatus,
       setAvatar,
     }}>
       {children}
