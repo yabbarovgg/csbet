@@ -33,26 +33,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
-  // 🔹 Вспомогательная функция для нормализации данных (чтобы ничего не слетало)
-  const normalizeUser = (data: any): User => {
-    return {
-      id: data.id,
-      nickname: data.nickname || 'Игрок',
-      balance: data.balance || 0,
-      settings: data.settings || { showGradient: true, avatar: null },
-      history: data.history || []
-    };
-  };
+  // 🔹 Нормализация данных из БД (страховка от null/undefined)
+  const normalizeUser = (data: any): User => ({
+    id: data.id,
+    nickname: data.nickname || 'Игрок',
+    balance: data.balance ?? 0,
+    settings: data.settings || { showGradient: true, avatar: null },
+    history: data.history || []
+  });
 
+  // Загрузка сессии при старте
   useEffect(() => {
     const checkSession = async () => {
+      console.log('🔍 [Auth] Проверка сессии...');
       const saved = localStorage.getItem('csbet_auth');
       if (saved === 'true') {
         const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
+        console.log('📥 [Auth] Данные из БД:', data, 'Ошибка:', error);
+        
         if (data && !error) {
-          setUser(normalizeUser(data)); // Нормализуем!
+          setUser(normalizeUser(data));
           setIsAuthenticated(true);
         } else {
+          console.warn('⚠️ [Auth] Аккаунт не найден, очищаю сессию');
           localStorage.removeItem('csbet_auth');
         }
       }
@@ -67,8 +70,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     let { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
 
     if (error || !data) {
-      console.log('⚠️ Аккаунт не найден. Создаем новый...');
-      const { data: newUser, error: insertError } = await supabase
+      console.log('🆕 [Auth] Аккаунт не найден. Создаю новый...');
+      const {  newUser, error: insertError } = await supabase
         .from('users')
         .insert({
           id: 'admin',
@@ -80,14 +83,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('❌ [Auth] Ошибка создания:', insertError);
+        throw insertError;
+      }
       data = newUser;
     }
 
-    setUser(normalizeUser(data)); // Нормализуем!
+    setUser(normalizeUser(data));
     localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
     setLoading(false);
+    console.log('✅ [Auth] Успешный вход');
   };
 
   const logout = () => {
@@ -96,47 +103,77 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsAuthenticated(false);
   };
 
+  // 🔹 НАДЁЖНОЕ обновление пользователя (ник, настройки)
   const updateUser = async (updates: Partial<User>) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
-    
-    // Обновляем локально сразу
+
+    // 1. Оптимистично обновляем UI
     const updated = { ...currentUser, ...updates };
     setUser(updated);
-    
-    // Сохраняем в фонe
-    supabase.from('users').update(updates).eq('id', 'admin');
+
+    // 2. Ждем ответа от Supabase
+    const { error } = await supabase.from('users').update(updates).eq('id', 'admin');
+    if (error) {
+      console.error('❌ [Auth] Ошибка сохранения в БД:', error);
+      // Откатываем UI, если база отклонила
+      setUser(currentUser);
+      alert(`Не удалось сохранить: ${error.message}`);
+    } else {
+      console.log('✅ [Auth] Успешно сохранено в БД:', updates);
+    }
   };
 
+  // 🔹 НАДЁЖНОЕ обновление баланса
   const updateBalance = async (newBalance: number) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-    await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
+    
+    const { error } = await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
+    if (error) {
+      console.error('❌ [Auth] Ошибка баланса:', error);
+      setUser(prev => prev ? { ...prev, balance: currentUser.balance } : null);
+    }
   };
 
   const addToHistory = async (bet: any) => {
-    const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
+    const { data, error } = await supabase.from('users').select('history').eq('id', 'admin').single();
+    if (error) return console.error('❌ [Auth] Чтение истории:', error);
+    
     const currentHistory = data?.history || [];
     const newHistory = [bet, ...currentHistory];
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
-    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+    
+    const { error: updateError } = await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+    if (updateError) console.error('❌ [Auth] Запись истории:', updateError);
   };
 
   const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
     const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
     if (!data) return;
+    
     const newHistory = data.history.map((b: any) => b.id === betId ? { ...b, status } : b);
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
+  // 🔹 НАДЁЖНОЕ сохранение аватарки
   const setAvatar = async (avatarUrl: string) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
+    
     const newSettings = { ...(currentUser.settings || {}), avatar: avatarUrl };
     setUser(prev => prev ? { ...prev, settings: newSettings } : null);
-    supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
+    
+    const { error } = await supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
+    if (error) {
+      console.error('❌ [Auth] Ошибка аватарки:', error);
+      setUser(prev => prev ? { ...prev, settings: currentUser.settings } : null);
+      alert('Не удалось сохранить аватарку: ' + error.message);
+    } else {
+      console.log('✅ [Auth] Аватарка сохранена');
+    }
   };
 
   return (
