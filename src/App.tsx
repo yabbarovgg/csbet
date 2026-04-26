@@ -14,7 +14,6 @@ import { BetSelection, PlacedBet, Match } from './types';
 import { liveMatches as initialLive, upcomingMatches as initialUpcoming, tournaments } from './data/matches';
 
 // --- Вспомогательные функции ---
-
 function jitter(odds: number, pct = 0.03): number {
   const delta = odds * pct * (Math.random() * 2 - 1);
   return Math.max(1.01, Math.round((odds + delta) * 100) / 100);
@@ -65,7 +64,8 @@ const AppContent: React.FC = () => {
   const userId = user?.id ? String(user.id) : null;
   const { activeLoan, hasEverHadLoan, totalActiveDebt, notifications, unreadCount, takeLoan, repayOldest, markAllRead, clearNotifications } = useLoans(userId);
 
-  const [liveData, setLiveData] = useState<Match[]>(initialLive);
+  // 🔹 Инициализация матчей с полем _simTime для симуляции
+  const [liveData, setLiveData] = useState<Match[]>(initialLive.map(m => ({ ...m, _simTime: 0 })));
   const [upcomingData] = useState<Match[]>(initialUpcoming);
 
   useEffect(() => { document.documentElement.classList.toggle('light', !isDark); }, [isDark]);
@@ -76,14 +76,42 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('resize', h);
   }, []);
 
+  // 🔹 СИМУЛЯЦИЯ МАТЧЕЙ: время идёт, счёт меняется, матчи завершаются
   useEffect(() => {
     const interval = setInterval(() => {
-      setLiveData((prev) => prev.map((m) => ({
+      setLiveData(prev => {
+        const updated = prev.map(m => {
+          if (!m.isLive) return m;
+          
+          const s1 = m.score1 || 0;
+          const s2 = m.score2 || 0;
+          const newS1 = Math.random() < 0.15 ? s1 + 1 : s1;
+          const newS2 = Math.random() < 0.15 ? s2 + 1 : s2;
+          const newTime = (m._simTime || 0) + 1;
+          
+          // Матч длится ~40-60 тиков (секунд реального времени)
+          if (newTime >= 40 + Math.random() * 20) {
+            return { ...m, isLive: false, score1: newS1, score2: newS2, _simTime: newTime, status: 'finished' };
+          }
+          return { ...m, score1: newS1, score2: newS2, _simTime: newTime };
+        });
+
+        // Удаляем завершённые матчи из списка через 10 секунд, чтобы не засорять UI
+        return updated.filter(m => m.isLive || (m._simTime || 0) < 50);
+      });
+    }, 1500); // 1.5 сек = 1 тик симуляции
+    return () => clearInterval(interval);
+  }, []);
+
+  // 🔹 ОБНОВЛЕНИЕ КОЭФФИЦИЕНТОВ В РЕАЛЬНОМ ВРЕМЕНИ
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLiveData(prev => prev.map(m => ({
         ...m,
         odds1: jitter(m.odds1, 0.02),
         odds2: jitter(m.odds2, 0.02),
       })));
-    }, 5000);
+    }, 4000);
     return () => clearInterval(interval);
   }, []);
 
@@ -102,7 +130,7 @@ const AppContent: React.FC = () => {
     setSelections((prev) => prev.filter((s) => s.matchId !== matchId));
   }, []);
 
-  // 🔹 ИСПРАВЛЕНО: используем функциональное обновление истории
+  // 🔹 СТАВКИ: функциональное обновление истории (исправление пропадания)
   const handlePlaceBet = useCallback(async (stake: number) => {
     const totalOdds = selections.reduce((a, s) => a * s.odds, 1);
     const potentialWin = Math.round(stake * totalOdds * 100) / 100;
@@ -117,25 +145,17 @@ const AppContent: React.FC = () => {
       status: 'pending',
     };
 
-    // 1. Списываем баланс
     await updateBalance(newBalance);
-    
-    // 🔹 2. Обновляем историю через функциональный апдейт
     await updateHistory((prevHistory: any[]) => [newBet, ...(prevHistory || [])]);
-    
     setSelections([]);
 
-    // 3. Имитация результата
+    // Имитация результата ставки
     setTimeout(async () => {
       const isWin = Math.random() > 0.5;
-      const winAmount = isWin ? potentialWin : 0;
-      
       if (isWin) {
-        const winBalance = newBalance + winAmount;
-        await updateBalance(winBalance);
+        await updateBalance(prevBal => prevBal + potentialWin);
       }
       
-      // Обновляем статус ставки
       await updateHistory((prevHistory: any[]) => 
         (prevHistory || []).map((b) => 
           (b.id === newBet.id ? { ...b, status: isWin ? 'won' : 'lost' } : b)
@@ -144,27 +164,33 @@ const AppContent: React.FC = () => {
     }, 10000 + Math.random() * 10000);
   }, [selections, balance, updateBalance, updateHistory]);
 
-  const handleTakeLoan = useCallback((amount: number, days: number) => {
+  // 🔹 ЗАЙМЫ: полноценная логика выдачи и погашения
+  const handleTakeLoan = async (amount: number, days: number) => {
     if (!user) return;
+    takeLoan(amount, days); // Вызов хука
+    const newBalance = balance + amount;
+    await updateBalance(newBalance); // Синхронизация с БД
     setDepositStep(null);
     setShowDeposit(false);
-  }, [user]);
+  };
 
-  const handleRepayFull = useCallback(() => {
+  const handleRepayFull = async () => {
     if (!activeLoan || !user) return;
     const amount = activeLoan.remaining;
     if (balance >= amount) {
-       // Логика погашения...
+      await updateBalance(balance - amount);
+      repayOldest(amount);
     }
-  }, [activeLoan, balance, user]);
+  };
 
-  const handleRepayPartial = useCallback((amount: number) => {
+  const handleRepayPartial = async (amount: number) => {
     if (!activeLoan || !user) return;
     const pay = Math.min(amount, activeLoan.remaining);
     if (balance >= pay) {
-       // Логика погашения...
+      await updateBalance(balance - pay);
+      repayOldest(pay);
     }
-  }, [activeLoan, balance, user]);
+  };
 
   const filterMatches = (matches: Match[]) => {
     let result = matches;
@@ -355,11 +381,7 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  return (
-    <div className="App">
-       <AppContent />
-    </div>
-  );
+  return <AppContent />;
 };
 
 export default App;

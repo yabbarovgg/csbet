@@ -18,7 +18,7 @@ interface AuthContextType {
   loading: boolean;
   login: (password: string) => Promise<void>;
   logout: () => void;
-  updateBalance: (newBalance: number) => Promise<void>;
+  updateBalance: (newBalance: number | ((prev: number) => number)) => Promise<void>;
   updateHistory: (newHistory: any[] | ((prev: any[]) => any[])) => Promise<void>;
   setAvatar: (avatarUrl: string) => Promise<void>;
 }
@@ -87,55 +87,42 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsAuthenticated(false);
   };
 
-  const updateBalance = async (newBalance: number) => {
-    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-    await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
+  // 🔹 Поддержка числа или функции для баланса
+  const updateBalance = async (newBalance: number | ((prev: number) => number)) => {
+    if (!user) return;
+    const bal = typeof newBalance === 'function' ? newBalance(user.balance) : newBalance;
+    setUser(prev => prev ? { ...prev, balance: bal } : null);
+    
+    const { error } = await supabase
+      .from('users')
+      .update({ balance: bal })
+      .eq('id', 'admin');
+    if (error) console.error('❌ Ошибка обновления баланса:', error);
   };
 
-  // 🔹 ИСПРАВЛЕНО: принимаем массив ИЛИ функцию
+  // 🔹 Поддержка массива или функции для истории
   const updateHistory = async (newHistory: any[] | ((prev: any[]) => any[])) => {
     if (!user) return;
-    
-    const historyArray = typeof newHistory === 'function' 
-      ? newHistory(user.history || []) 
-      : newHistory;
-
+    const historyArray = typeof newHistory === 'function' ? newHistory(user.history || []) : newHistory;
     setUser(prev => prev ? { ...prev, history: historyArray } : null);
-
+    
     const { error } = await supabase
       .from('users')
       .update({ history: historyArray })
       .eq('id', 'admin');
-
-    if (error) {
-      console.error('❌ Ошибка сохранения истории:', error);
-      setUser(prev => prev || null);
-    }
+    if (error) console.error('❌ Ошибка сохранения истории:', error);
   };
 
   const setAvatar = async (avatarUrl: string) => {
-    if (!user) {
-      console.warn('⚠️ [Auth] setAvatar вызван, но user === null');
-      return;
-    }
-
+    if (!user) return;
     try {
-      console.log('💾 [Auth] Сохраняю аватарку в Supabase...');
       const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
-
       setUser(prev => prev ? { ...prev, settings: newSettings } : null);
-
-      const { error } = await supabase
-        .from('users')
-        .update({ settings: newSettings })
-        .eq('id', 'admin');
-
+      const { error } = await supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
       if (error) throw error;
-      console.log('✅ [Auth] Аватарка успешно сохранена в БД!');
     } catch (err) {
-      console.error('❌ [Auth] Ошибка сохранения аватарки:', err);
+      console.error('❌ Ошибка сохранения аватарки:', err);
       setUser(prev => prev || null);
-      alert('Не удалось сохранить аватарку. Проверь консоль (F12).');
     }
   };
 
