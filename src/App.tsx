@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from './auth/AuthContext';
 import AuthPage from './auth/AuthPage';
 import Header from './components/Header';
@@ -12,6 +12,8 @@ import Notifications from './components/Notifications';
 import useLoans from './hooks/useLoans';
 import { BetSelection, PlacedBet, Match } from './types';
 import { liveMatches as initialLive, upcomingMatches as initialUpcoming, tournaments } from './data/matches';
+
+// --- Вспомогательные функции ---
 
 function jitter(odds: number, pct = 0.03): number {
   const delta = odds * pct * (Math.random() * 2 - 1);
@@ -43,12 +45,15 @@ function formatRelativeTime(match: Match): string {
 }
 
 const AppContent: React.FC = () => {
+  // Контекст авторизации и данных пользователя
   const { user, isAuthenticated, login, register, updateBalance, addToHistory, updateBetStatus, updateUser } = useAuth();
   
+  // Локальные состояния UI
   const [isDark, setIsDark] = useState(true);
   const [page, setPage] = useState<'home' | 'stats'>('home');
   const [selections, setSelections] = useState<BetSelection[]>([]);
   
+  // Данные из базы (через Context)
   const balance = user?.balance ?? 15420;
   const betHistory = user?.history ?? [];
   
@@ -57,15 +62,23 @@ const AppContent: React.FC = () => {
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState<'left' | 'right' | null>(null);
 
+  // Состояния депозита/займа
   const [showDeposit, setShowDeposit] = useState(false);
   const [depositStep, setDepositStep] = useState<'modal' | 'loan' | 'card' | 'promo' | null>(null);
 
+  // Хук займов
   const userId = user?.id ? String(user.id) : null;
   const { activeLoan, hasEverHadLoan, totalActiveDebt, notifications, unreadCount, takeLoan, repayOldest, markAllRead, clearNotifications } = useLoans(userId);
 
+  // Состояние матчей
   const [liveData, setLiveData] = useState<Match[]>(initialLive.map(m => ({ ...m, _simTime: 0 })));
   const [upcomingData] = useState<Match[]>(initialUpcoming);
 
+  // Очистка таймеров при размонтировании (чтобы не было утечек и багов)
+  const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  useEffect(() => () => timeoutsRef.current.forEach(clearTimeout), []);
+
+  // Эффекты
   useEffect(() => { document.documentElement.classList.toggle('light', !isDark); }, [isDark]);
 
   useEffect(() => {
@@ -74,26 +87,27 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('resize', h);
   }, []);
 
-  // 🔹 СИМУЛЯЦИЯ МАТЧЕЙ: Время идет, матчи заканчиваются
+  // Симуляция матчей (счет и время)
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => {
-        return prev.map(m => {
+        const updated = prev.map(m => {
           if (!m.isLive) return m;
-          
           const s1 = m.score1 || 0;
           const s2 = m.score2 || 0;
-          // Рандомный гол с шансом 15%
+          // Шанс гола 15%
           const newS1 = Math.random() < 0.15 ? s1 + 1 : s1;
           const newS2 = Math.random() < 0.15 ? s2 + 1 : s2;
           const newTime = (m._simTime || 0) + 1;
           
-          // Матч длится ~40 тиков
+          // Матч заканчивается через 40-60 секунд
           if (newTime >= 40 + Math.random() * 20) {
             return { ...m, isLive: false, score1: newS1, score2: newS2, _simTime: newTime, status: 'finished' };
           }
           return { ...m, score1: newS1, score2: newS2, _simTime: newTime };
         });
+        // Удаляем завершенные матчи через время
+        return updated.filter(m => m.isLive || (m._simTime || 0) < 60);
       });
     }, 1000);
     return () => clearInterval(interval);
@@ -111,6 +125,8 @@ const AppContent: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // --- Логика ставок ---
+
   const handleToggleSelection = useCallback((sel: BetSelection) => {
     setSelections((prev) => {
       const existing = prev.findIndex((s) => s.matchId === sel.matchId && s.selectionType === sel.selectionType);
@@ -126,42 +142,52 @@ const AppContent: React.FC = () => {
     setSelections((prev) => prev.filter((s) => s.matchId !== matchId));
   }, []);
 
-  // 🔹 СТАВКИ: Добавляем в историю
+  // 🔹 ГЛАВНАЯ ФУНКЦИЯ: Оформление ставки
   const handlePlaceBet = useCallback(async (stake: number) => {
     const totalOdds = selections.reduce((a, s) => a * s.odds, 1);
     const potentialWin = Math.round(stake * totalOdds * 100) / 100;
     const newBalance = balance - stake;
     
     const newBet: PlacedBet = {
-      id: `bet-${Date.now()}`, 
+      id: `bet-${Date.now()}-${Math.random()}`, 
       selections: [...selections], 
       stake, 
       potentialWin,
-      timestamp: `Сегодня, ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
+      timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
       status: 'pending',
     };
 
+    // 1. Списываем деньги и добавляем в историю (МГНОВЕННО)
     await updateBalance(newBalance);
     await addToHistory(newBet);
     setSelections([]);
 
-    // Имитация результата
-    setTimeout(async () => {
-      const isWin = Math.random() > 0.5;
+    // 2. Запускаем таймер результата (симуляция)
+    const t = setTimeout(async () => {
+      const isWin = Math.random() > 0.5; // 50/50 шанс
+      
       if (isWin) {
         await updateBalance(newBalance + potentialWin);
       }
+      // Обновляем статус ставки в истории
       await updateBetStatus(newBet.id, isWin ? 'won' : 'lost');
-    }, 10000 + Math.random() * 10000);
+    }, 5000 + Math.random() * 10000); // 5-15 секунд
+
+    timeoutsRef.current.push(t);
   }, [selections, balance, updateBalance, addToHistory, updateBetStatus]);
 
-  // 🔹 ЗАЙМЫ: Быстрое закрытие меню (Optimistic UI)
+  // --- Логика Займов ---
+
   const handleTakeLoan = async (amount: number, days: number) => {
     if (!user) return;
     takeLoan(amount, days); // Локальное обновление
+    
+    // МГНОВЕННО закрываем меню (не ждем ответа от базы для UI)
     setDepositStep(null);
-    setShowDeposit(false); // Закрываем МГНОВЕННО
-    await updateBalance(balance + amount); // Обновляем баланс в фоне
+    setShowDeposit(false);
+    
+    // Обновляем баланс
+    await updateBalance(balance + amount);
   };
 
   const handleRepayFull = async () => {
@@ -182,6 +208,8 @@ const AppContent: React.FC = () => {
     }
   };
 
+  // --- Фильтрация и сортировка матчей ---
+
   const filterMatches = (matches: Match[]) => {
     let result = matches;
     if (selectedMatchId) return result.filter((m) => m.id === selectedMatchId);
@@ -198,6 +226,8 @@ const AppContent: React.FC = () => {
 
   const fLive = useMemo(() => filterMatches(liveData), [liveData, activeTournament, selectedMatchId]);
   const fUpcoming = useMemo(() => filterMatches(upcomingData), [upcomingData, activeTournament, selectedMatchId]);
+
+  // --- Рендер ---
 
   const bgPage = isDark ? 'bg-[#0a0a0a]' : 'bg-gray-50';
   const textP = isDark ? 'text-white' : 'text-gray-900';
@@ -226,6 +256,7 @@ const AppContent: React.FC = () => {
         notifications={notificationsComponent}
       />
 
+      {/* Модальные окна депозита/займа */}
       {showDeposit && depositStep === 'modal' && (
         <DepositModal
           isDark={isDark}
@@ -245,28 +276,23 @@ const AppContent: React.FC = () => {
         />
       )}
       {showDeposit && (depositStep === 'card' || depositStep === 'promo') && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4" style={{ overflow: 'hidden' }}>
-          <div className={`w-full max-w-sm rounded-2xl border ${isDark ? 'bg-[#141414] border-white/10 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
-            <div className="flex items-center justify-between p-6 pb-0">
-              <h3 className="text-lg font-bold">{depositStep === 'card' ? 'Банковская карта' : 'Промокод'}</h3>
-              <button onClick={() => setDepositStep('modal')} className="text-gray-500 hover:text-white text-xl cursor-pointer">×</button>
-            </div>
-            <div className="p-8 text-center">
-              <div className="text-4xl mb-3">{depositStep === 'card' ? '💳' : '🎟️'}</div>
-              <p className={`text-sm ${textS}`}>Этот способ пополнения скоро будет доступен</p>
-              <button onClick={() => setDepositStep('modal')} className="mt-6 bg-gradient-to-r from-amber-400 to-yellow-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl hover:opacity-90 transition-opacity cursor-pointer">Понятно</button>
-            </div>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-sm rounded-2xl border ${isDark ? 'bg-[#141414] border-white/10' : 'bg-white border-gray-200'} p-8 text-center`}>
+            <h3 className="text-lg font-bold mb-4">{depositStep === 'card' ? '💳 Банковская карта' : '🎟️ Промокод'}</h3>
+            <p className="text-sm text-gray-500 mb-6">Этот способ пополнения скоро будет доступен</p>
+            <button onClick={() => setDepositStep('modal')} className="bg-gradient-to-r from-amber-400 to-yellow-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl">Понятно</button>
           </div>
         </div>
       )}
 
+      {/* Мобильные кнопки */}
       <div className="lg:hidden fixed bottom-4 right-4 z-50 flex flex-col gap-3">
         <button onClick={() => setMobileMenu(mobileMenu === 'left' ? null : 'left')}
-          className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg cursor-pointer ${isDark ? 'bg-[#1a1a1a] text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}>
+          className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg ${isDark ? 'bg-[#1a1a1a] text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <button onClick={() => setMobileMenu(mobileMenu === 'right' ? null : 'right')}
-          className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-400 text-black flex items-center justify-center shadow-lg shadow-amber-400/30 relative cursor-pointer">
+          className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-400 text-black flex items-center justify-center shadow-lg shadow-amber-400/30 relative">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/></svg>
           {selections.length > 0 && (
             <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{selections.length}</span>
@@ -274,11 +300,13 @@ const AppContent: React.FC = () => {
         </button>
       </div>
 
+      {/* Затемнение для мобильного меню */}
       {mobileMenu && (
         <div className="lg:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenu(null)} />
       )}
 
       <div className="flex">
+        {/* Левое меню (Турниры) */}
         <div className={`lg:static fixed top-[88px] left-0 bottom-0 z-40 transition-transform duration-300 ${
           mobileMenu === 'left' ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}>
@@ -293,14 +321,15 @@ const AppContent: React.FC = () => {
           />
         </div>
 
+        {/* Основной контент */}
         <main className="flex-1 min-w-0 px-4 lg:px-6 py-6 pb-24 lg:pb-6">
           <div className="flex items-center gap-2 mb-6 overflow-x-auto">
             <button onClick={() => setPage('home')}
-              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
                 page === 'home' ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' : isDark ? 'text-gray-500 hover:text-white hover:bg-white/5 border border-transparent' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100 border border-transparent'
               }`}>🎮 Матчи</button>
             <button onClick={() => setPage('stats')}
-              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
                 page === 'stats' ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' : isDark ? 'text-gray-500 hover:text-white hover:bg-white/5 border border-transparent' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100 border border-transparent'
               }`}>📊 Статистика</button>
           </div>
@@ -310,7 +339,7 @@ const AppContent: React.FC = () => {
               {selectedMatchId && (
                 <div className="mb-4 bg-amber-400/5 border border-amber-400/20 rounded-2xl px-4 py-3 flex items-center justify-between">
                   <span className="text-xs text-amber-400">Показан выбранный матч</span>
-                  <button onClick={() => { setSelectedMatchId(null); setActiveTournament(null); }} className="text-xs text-gray-500 hover:text-white transition-colors cursor-pointer">Показать все×</button>
+                  <button onClick={() => { setSelectedMatchId(null); setActiveTournament(null); }} className="text-xs text-gray-500 hover:text-white">Показать все×</button>
                 </div>
               )}
               {fLive.length > 0 && (
@@ -326,6 +355,7 @@ const AppContent: React.FC = () => {
               )}
               <MatchesSection title="LIVE" icon="" matches={fLive} selections={selections} onToggleSelection={handleToggleSelection} isDark={isDark} />
               <MatchesSection title="Предстоящие матчи" icon="📅" matches={fUpcoming} selections={selections} onToggleSelection={handleToggleSelection} isDark={isDark} formatRelativeTime={formatRelativeTime} />
+              
               <footer className={`mt-12 pt-6 border-t ${isDark ? 'border-white/5' : 'border-gray-200'}`}>
                 <div className="flex items-center justify-between text-xs ${textS}">
                   <div className="flex items-center gap-2">
@@ -340,6 +370,7 @@ const AppContent: React.FC = () => {
           )}
         </main>
 
+        {/* Правое меню (Купон) */}
         <div className={`lg:static fixed top-[88px] right-0 bottom-0 z-40 transition-transform duration-300 ${
           mobileMenu === 'right' ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
         }`}>
@@ -366,7 +397,11 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  return <AppContent />;
+  return (
+    <div className="App">
+       <AppContent />
+    </div>
+  );
 };
 
 export default App;
