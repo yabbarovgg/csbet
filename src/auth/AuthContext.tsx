@@ -1,59 +1,84 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, getCurrentUser, login as authLogin, register as authRegister, logout as authLogout, updateUser as authUpdateUser } from '../auth/auth';
+// src/auth/AuthContext.tsx
+import { createContext, useContext, useState } from 'react';
+import { supabase } from '../lib/supabase';
+
+interface User {
+  id: string;
+  balance: number;
+  settings: any;
+  history: any[];
+}
 
 interface AuthContextType {
-  user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => { success: boolean; error?: string };
-  register: (nickname: string, email: string, password: string) => { success: boolean; error?: string };
-  logout: () => void;
-  updateUser: (updates: Partial<User>) => void;
+  user: User | null;
+  loading: boolean;
+  login: (password: string) => Promise<void>;
+  updateBalance: (newBalance: number) => Promise<void>;
+  updateHistory: (newHistory: any[]) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const u = getCurrentUser();
-    setUser(u);
-  }, []);
+  const login = async (password: string) => {
+    // 1. Проверка мастер-пароля
+    if (password !== import.meta.env.VITE_MASTER_PASSWORD) {
+      throw new Error('Неверный пароль');
+    }
 
-  const login = useCallback((email: string, password: string) => {
-    const result = authLogin(email, password);
-    if (result.success && result.user) setUser(result.user);
-    return { success: result.success, error: result.error };
-  }, []);
+    // 2. Ищем запись в БД
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', 'admin')
+      .single();
 
-  const register = useCallback((nickname: string, email: string, password: string) => {
-    const result = authRegister(nickname, email, password);
-    if (result.success && result.user) setUser(result.user);
-    return { success: result.success, error: result.error };
-  }, []);
+    if (error && error.code === 'PGRST116') {
+      // Строка не найдена → создаём новую
+      const { data: newUser, error: insertError } = await supabase
+        .from('users')
+        .insert({ id: 'admin', balance: 15420, settings: {}, history: [] })
+        .select()
+        .single();
+      
+      if (insertError) throw insertError;
+      setUser(newUser);
+    } else if (error) {
+      throw error;
+    } else {
+      setUser(data);
+    }
 
-  const logout = useCallback(() => {
-    authLogout();
-    setUser(null);
-  }, []);
+    setIsAuthenticated(true);
+    setLoading(false);
+  };
 
-  const updateUserFn = useCallback((updates: Partial<User>) => {
-    setUser((prev) => {
-      if (!prev) return null;
-      authUpdateUser(prev.id, updates);
-      return { ...prev, ...updates };
-    });
-  }, []);
+  // Сохранение баланса в облако
+  const updateBalance = async (newBalance: number) => {
+    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
+    await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
+  };
+
+  // Сохранение истории в облако
+  const updateHistory = async (newHistory: any[]) => {
+    setUser(prev => prev ? { ...prev, history: newHistory } : null);
+    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+  };
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, updateUser: updateUserFn }}>
+    <AuthContext.Provider value={{ isAuthenticated, user, loading, login, updateBalance, updateHistory }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
 export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
 };
