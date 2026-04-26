@@ -6,7 +6,7 @@ interface User {
   id: string;
   nickname?: string;
   balance: number;
-  settings: { showGradient?: boolean; avatar?: string };
+  settings: { showGradient?: boolean; avatar?: string | null };
   history: any[];
 }
 
@@ -30,44 +30,82 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   
-  // 🔹 Ref для доступа к актуальному юзеру внутри асинхронных функций
+  // Ref для доступа к актуальным данным внутри асинхронных функций
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
+  // Проверка сессии при загрузке
   useEffect(() => {
     const checkSession = async () => {
       const saved = localStorage.getItem('csbet_auth');
       if (saved === 'true') {
-        const { data } = await supabase.from('users').select('*').eq('id', 'admin').single();
-        if (data) { setUser(data); setIsAuthenticated(true); }
-        else localStorage.removeItem('csbet_auth');
+        const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
+        if (data && !error) {
+          setUser(data);
+          setIsAuthenticated(true);
+        } else {
+          // Если аккаунт удален - очищаем флаг, чтобы показать экран входа
+          localStorage.removeItem('csbet_auth');
+        }
       }
       setLoading(false);
     };
     checkSession();
   }, []);
 
+  // 🔹 ЛОГИН: Автоматически создает аккаунт, если его нет
   const login = async (password: string) => {
-    if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
-    const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
-    if (error && error.code === 'PGRST116') {
-      const { data: newUser } = await supabase.from('users').insert({ id: 'admin', balance: 15420, settings: {}, history: [], nickname: 'Игрок' }).select().single();
-      setUser(newUser);
-    } else if (error) throw error;
-    else setUser(data);
+    if (password !== import.meta.env.VITE_MASTER_PASSWORD) {
+      throw new Error('Неверный пароль');
+    }
+
+    // Пробуем найти существующего
+    let { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', 'admin')
+      .single();
+
+    // Если ошибка или данных нет → создаем заново
+    if (error || !data) {
+      console.log('⚠️ Аккаунт не найден. Создаем новый...');
+      const { data: newUser, error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: 'admin',
+          balance: 15420,
+          settings: { showGradient: true, avatar: null },
+          history: [],
+          nickname: 'Игрок'
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('❌ Не удалось создать аккаунт:', insertError);
+        throw insertError;
+      }
+      data = newUser;
+    }
+
+    setUser(data);
     localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
     setLoading(false);
   };
 
-  const logout = () => { localStorage.removeItem('csbet_auth'); setUser(null); setIsAuthenticated(false); };
+  const logout = () => {
+    localStorage.removeItem('csbet_auth');
+    setUser(null);
+    setIsAuthenticated(false);
+  };
 
   const updateUser = async (updates: Partial<User>) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
     const updated = { ...currentUser, ...updates };
     setUser(updated);
-    supabase.from('users').update(updates).eq('id', 'admin'); // Fire & forget
+    supabase.from('users').update(updates).eq('id', 'admin');
   };
 
   const updateBalance = async (newBalance: number) => {
@@ -77,7 +115,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
   };
 
-  // 🔹 ЧИТАЕТ ИЗ БАЗЫ ПРЯМО ПЕРЕД ЗАПИСЬЮ → НИКАКИХ ПОТЕРЬ СТАВОК
+  // Читаем из БД прямо перед записью → защита от потери ставок
   const addToHistory = async (bet: any) => {
     const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
     const currentHistory = data?.history || [];
@@ -86,7 +124,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
-  // 🔹 НАДЁЖНОЕ ОБНОВЛЕНИЕ СТАТУСА
   const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
     const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
     if (!data) return;
@@ -104,7 +141,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, loading, login, logout, updateBalance, addToHistory, updateBetStatus, setAvatar, updateUser }}>
+    <AuthContext.Provider value={{ 
+      isAuthenticated, user, loading, login, logout, 
+      updateBalance, addToHistory, updateBetStatus, setAvatar, updateUser 
+    }}>
       {children}
     </AuthContext.Provider>
   );
