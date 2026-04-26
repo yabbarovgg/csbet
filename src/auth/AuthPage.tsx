@@ -1,64 +1,38 @@
 import React, { useState } from 'react';
+import { useAuth } from './AuthContext';
 
-interface AuthPageProps {
-  onLogin: (email: string, password: string) => { success: boolean; error?: string };
-  onRegister: (nickname: string, email: string, password: string) => { success: boolean; error?: string };
-}
-
-const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegister }) => {
+const AuthPage: React.FC = () => {
+  const { login, register } = useAuth();
+  
   const [isLogin, setIsLogin] = useState(true);
-  const [nickname, setNickname] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!isLogin) {
-      if (nickname.trim().length < 4) {
-        setError('Ник минимум 4 символа');
-        return;
-      }
-      if (!isValidEmail(email.trim())) {
-        setError('Введите корректный email (например: user@mail.ru)');
-        return;
-      }
-      if (password.length < 6) {
-        setError('Пароль минимум 6 символов');
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError('Пароли не совпадают');
-        return;
-      }
-    } else {
-      if (!email.trim()) {
-        setError('Введите email');
-        return;
-      }
-      if (password.length < 1) {
-        setError('Введите пароль');
-        return;
-      }
+    if (!password.trim()) {
+      setError('Введите пароль');
+      return;
     }
 
     setLoading(true);
-    setTimeout(() => {
+    
+    try {
       if (isLogin) {
-        const result = onLogin(email.trim(), password);
-        if (!result.success) setError(result.error || 'Ошибка входа');
+        await login(password);
       } else {
-        const result = onRegister(nickname.trim(), email.trim().toLowerCase(), password);
-        if (!result.success) setError(result.error || 'Ошибка регистрации');
+        // Для симулятора регистрация = вход с тем же паролем
+        await login(password);
       }
+      // Успех — компонент перерендерится через контекст
+    } catch (err: any) {
+      setError(err.message || 'Ошибка');
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   return (
@@ -112,32 +86,10 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegister }) => {
               </div>
             )}
 
-            {!isLogin && (
-              <div className="mb-4">
-                <label className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-2 block">Никнейм</label>
-                <input
-                  type="text"
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value)}
-                  placeholder="Ваш никнейм (мин. 4 символа)"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium placeholder:text-gray-600 focus:outline-none focus:border-amber-400/30 focus:bg-white/[0.07] transition-all"
-                />
-              </div>
-            )}
-
-            <div className="mb-4">
-              <label className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-2 block">Email</label>
-              <input
-                type="text"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder={isLogin ? "email@example.com" : "user@example.com"}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium placeholder:text-gray-600 focus:outline-none focus:border-amber-400/30 focus:bg-white/[0.07] transition-all"
-              />
-            </div>
-
-            <div className={`mb-${isLogin ? '0' : '4'}`}>
-              <label className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-2 block">Пароль</label>
+            <div className="mb-6">
+              <label className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-2 block">
+                {isLogin ? 'Пароль' : 'Придумайте пароль'}
+              </label>
               <input
                 type="password"
                 value={password}
@@ -146,22 +98,6 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegister }) => {
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium placeholder:text-gray-600 focus:outline-none focus:border-amber-400/30 focus:bg-white/[0.07] transition-all"
               />
             </div>
-
-            {!isLogin && (
-              <div className="mt-4 mb-6">
-                <label className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-2 block">Подтвердите пароль</label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Повторите пароль"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-medium placeholder:text-gray-600 focus:outline-none focus:border-amber-400/30 focus:bg-white/[0.07] transition-all"
-                />
-                <p className="text-xs text-gray-600 mt-1.5">Минимум 6 символов</p>
-              </div>
-            )}
-
-            {isLogin && <div className="mb-6" />}
 
             <button
               type="submit"
@@ -185,13 +121,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin, onRegister }) => {
 
           <div className="mt-6 text-center">
             <p className="text-xs text-gray-600">
-              {isLogin ? 'Нет аккаунта? ' : 'Уже есть аккаунт? '}
-              <button
-                onClick={() => { setIsLogin(!isLogin); setError(''); }}
-                className="text-amber-400 hover:underline"
-              >
-                {isLogin ? 'Зарегистрируйтесь' : 'Войдите'}
-              </button>
+              Это симулятор. Введите мастер-пароль для входа.
             </p>
           </div>
         </div>
