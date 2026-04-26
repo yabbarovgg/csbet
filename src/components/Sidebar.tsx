@@ -26,7 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   selections, onRemoveSelection, onClearSelections, onPlaceBet, betHistory, balance, isDark,
   showGradient, onToggleGradient, activeLoan, onRepayFull, onRepayPartial,
 }) => {
-  // 🔹 Добавили setAvatar в деструктуризацию
+  // 🔹 Добавили setAvatar
   const { user, logout, setAvatar } = useAuth();
   
   const [activeTab, setActiveTab] = useState<'betSlip' | 'history'>('betSlip');
@@ -61,7 +61,6 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSaveNick = () => {
     if (nickInput.length >= 2 && user && nickInput !== user.nickname) {
-      // Если есть функция updateNickname в контексте — используй её
       // updateUserData({ nickname: nickInput.trim() });
     }
     setEditingNick(false);
@@ -77,15 +76,23 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className={`${bg} border-l ${border} h-full lg:h-[calc(100vh-88px)] lg:sticky lg:top-[88px] flex flex-col overflow-hidden transition-colors duration-300 w-80`}>
       
-      {/* 🔹 Crop modal — ИСПРАВЛЕНО: используем setAvatar */}
+      {/* 🔹 Модальное окно кропа */}
       {cropImage && (
         <AvatarCrop
           imageSrc={cropImage}
           onCrop={async (dataUrl) => { 
-            await setAvatar(dataUrl); // 🔹 Правильная функция + await
+            console.log('🔄 [Sidebar] onCrop вызван, сохраняю аватарку...');
+            if (setAvatar) {
+              await setAvatar(dataUrl);
+            } else {
+              console.error('❌ [Sidebar] setAvatar не найден!');
+            }
             setCropImage(null); 
           }}
-          onCancel={() => setCropImage(null)}
+          onCancel={() => {
+            console.log('❌ [Sidebar] Отмена кропа');
+            setCropImage(null);
+          }}
         />
       )}
 
@@ -93,7 +100,6 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className={`px-4 py-4 border-b ${border}`}>
         <div className="flex items-center gap-3">
           <div className="shrink-0">
-            {/* 🔹 Исправлено: avatar берётся из settings.avatar */}
             <AvatarUpload
               avatar={user?.settings?.avatar || null}
               onAvatarChange={(url) => setCropImage(url)}

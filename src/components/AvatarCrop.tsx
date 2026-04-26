@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 
 interface AvatarCropProps {
   imageSrc: string;
-  onCrop: (dataUrl: string) => void;
+  onCrop?: (dataUrl: string) => void; // 🔹 Сделали опциональным
   onCancel: () => void;
 }
 
@@ -12,39 +12,32 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
   const imgElRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef({ startX: 0, startY: 0, offX: 0, offY: 0 });
 
-  // View dimensions
   const V = 260;
 
-  // Natural image dimensions (set on load)
   const [natW, setNatW] = useState(0);
   const [natH, setNatH] = useState(0);
 
-  // Transform state
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
   const [scale, setScale] = useState(1);
   const [dragging, setDragging] = useState(false);
   const [ready, setReady] = useState(false);
 
-  // minScale: COVER — image fills circle completely (no black bars)
-  // maxScale: zoomed in further
   const minScale = natW > 0 ? V / Math.min(natW, natH) : 1;
   const maxScale = natW > 0 ? V / Math.min(natW, natH) * 4 : 5;
 
-  // Reset everything on new image
   useEffect(() => {
     setReady(false);
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       imgElRef.current = img;
-      const s = V / Math.min(img.width, img.height); // cover — fills circle
+      const s = V / Math.min(img.width, img.height);
       setNatW(img.width);
       setNatH(img.height);
       setScale(s);
       setTx(0);
       setTy(0);
-      // Double rAF ensures DOM is painted before enabling interaction
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setReady(true));
       });
@@ -52,13 +45,10 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
     img.src = imageSrc;
   }, [imageSrc]);
 
-  // Clamp offset so image never leaves circle completely
   const clamp = useCallback((x: number, y: number, s: number) => {
     if (natW === 0 || natH === 0) return { x: 0, y: 0 };
-    // Visible area of image at this scale
     const vw = natW * s;
     const vh = natH * s;
-    // How far can we move before edge reaches circle edge?
     const mx = Math.max(0, (vw - V) / 2);
     const my = Math.max(0, (vh - V) / 2);
     return {
@@ -103,7 +93,6 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
     setDragging(false);
   };
 
-  // Slider: 0 = minScale (contain), 1 = maxScale (zoomed)
   const sliderVal = minScale < maxScale ? (scale - minScale) / (maxScale - minScale) : 0;
 
   const applyScale = (s: number) => {
@@ -124,11 +113,25 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
 
   const doCrop = () => {
     const img = imgElRef.current;
-    if (!img || natW === 0) return;
+    if (!img || natW === 0) {
+      console.error('❌ [Crop] Изображение не загружено или размеры равны 0');
+      return;
+    }
+    
+    // 🔹 Проверка наличия функции onCrop
+    if (typeof onCrop !== 'function') {
+      console.error('❌ [Crop] onCrop не передан или не является функцией!');
+      return;
+    }
+
     const OUT = 256;
     const canvas = document.createElement('canvas');
     canvas.width = OUT; canvas.height = OUT;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      console.error('❌ [Crop] Не удалось получить контекст canvas');
+      return;
+    }
 
     ctx.beginPath();
     ctx.arc(OUT / 2, OUT / 2, OUT / 2, 0, Math.PI * 2);
@@ -139,8 +142,15 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
     const dh = natH * scale * r;
     const dx = OUT / 2 - dw / 2 + tx * r;
     const dy = OUT / 2 - dh / 2 + ty * r;
-    ctx.drawImage(img, dx, dy, dw, dh);
-    onCrop(canvas.toDataURL('image/png'));
+    
+    try {
+      ctx.drawImage(img, dx, dy, dw, dh);
+      const dataUrl = canvas.toDataURL('image/png');
+      console.log('✅ [Crop] Кроп успешен, вызываю onCrop');
+      onCrop(dataUrl);
+    } catch (err) {
+      console.error('❌ [Crop] Ошибка при рисовании на canvas:', err);
+    }
   };
 
   if (natW === 0) {
@@ -160,7 +170,6 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
         <h3 className="text-white font-bold text-center mb-1">Аватарка</h3>
         <p className="text-gray-500 text-xs text-center mb-4">Перемещайте и масштабируйте</p>
 
-        {/* Preview */}
         <div
           ref={previewRef}
           className="relative overflow-hidden bg-transparent"
@@ -182,7 +191,6 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
           onTouchEnd={onUp}
           onWheel={onWheel}
         >
-          {/* Image — centered with translate(-50%, -50%), then offset and scaled */}
           <div
             style={{
               position: 'absolute',
@@ -206,14 +214,12 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
             />
           </div>
 
-          {/* Gold circle border only */}
           <div
             className="absolute inset-0 pointer-events-none rounded-full"
             style={{ border: '2px solid rgba(251,191,36,0.5)' }}
           />
         </div>
 
-        {/* Slider */}
         <div className="flex items-center gap-3 mb-5 px-1">
           <button
             onClick={() => applyScale(scale * 0.9)}
@@ -241,7 +247,6 @@ const AvatarCrop: React.FC<AvatarCropProps> = ({ imageSrc, onCrop, onCancel }) =
           </button>
         </div>
 
-        {/* Buttons */}
         <div className="flex gap-3">
           <button
             onClick={() => { setScale(minScale); setTx(0); setTy(0); }}
