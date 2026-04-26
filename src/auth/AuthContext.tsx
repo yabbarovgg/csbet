@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 
 interface User {
   id: string;
+  nickname?: string;
   balance: number;
   settings: {
     showGradient?: boolean;
@@ -22,6 +23,7 @@ interface AuthContextType {
   addToHistory: (bet: any) => Promise<void>;
   updateBetStatus: (betId: string, status: 'won' | 'lost') => Promise<void>;
   setAvatar: (avatarUrl: string) => Promise<void>;
+  updateUser: (updates: Partial<User>) => Promise<void>; // 🔹 Для ника и настроек
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -65,9 +67,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       .single();
 
     if (error && error.code === 'PGRST116') {
-      const {  newUser } = await supabase
+      const { data: newUser } = await supabase
         .from('users')
-        .insert({ id: 'admin', balance: 15420, settings: {}, history: [] })
+        .insert({ id: 'admin', balance: 15420, settings: {}, history: [], nickname: 'Игрок' })
         .select()
         .single();
       setUser(newUser);
@@ -88,63 +90,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsAuthenticated(false);
   };
 
-  // 🔹 Простое обновление баланса
+  // 🔹 Универсальная функция обновления пользователя (Ник, Настройки)
+  const updateUser = async (updates: Partial<User>) => {
+    if (!user) return;
+    const updatedUser = { ...user, ...updates };
+    setUser(updatedUser);
+    // Сохраняем в фонe
+    supabase.from('users').update(updates).eq('id', 'admin');
+  };
+
   const updateBalance = async (newBalance: number) => {
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
     await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
   };
 
-  // 🔹 Добавление ставки в историю (читаем текущую из БД)
   const addToHistory = async (bet: any) => {
-    // Читаем актуальную историю из БД
-    const {  currentData } = await supabase
-      .from('users')
-      .select('history')
-      .eq('id', 'admin')
-      .single();
-    
-    const currentHistory = currentData?.history || [];
-    const newHistory = [bet, ...currentHistory];
-    
-    // Обновляем локально и в БД
+    if (!user) return;
+    const newHistory = [bet, ...(user.history || [])];
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
-  // 🔹 Обновление статуса ставки
+  // 🔹 Исправлено: надежное обновление статуса
   const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
-    const {  currentData } = await supabase
-      .from('users')
-      .select('history')
-      .eq('id', 'admin')
-      .single();
-    
-    const currentHistory = currentData?.history || [];
-    const updatedHistory = currentHistory.map((b: any) => 
+    if (!user) return;
+    const newHistory = (user.history || []).map((b: any) => 
       b.id === betId ? { ...b, status } : b
     );
-    
-    setUser(prev => prev ? { ...prev, history: updatedHistory } : null);
-    await supabase.from('users').update({ history: updatedHistory }).eq('id', 'admin');
+    setUser(prev => prev ? { ...prev, history: newHistory } : null);
+    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
-  // 🔹 Быстрое сохранение аватарки (оптимистичное)
   const setAvatar = async (avatarUrl: string) => {
     if (!user) return;
-    
-    // Сразу обновляем UI
     const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
     setUser(prev => prev ? { ...prev, settings: newSettings } : null);
-    
-    // Сохраняем в фоне (не ждём)
-    supabase.from('users').update({ settings: newSettings }).eq('id', 'admin')
-      .then(({ error }) => {
-        if (error) {
-          console.error('❌ Ошибка сохранения аватарки:', error);
-          // Откат при ошибке
-          setUser(prev => prev || null);
-        }
-      });
+    // Fire and forget
+    supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
   };
 
   return (
@@ -158,6 +140,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       addToHistory,
       updateBetStatus,
       setAvatar,
+      updateUser, // 🔹 Экспортируем
     }}>
       {children}
     </AuthContext.Provider>

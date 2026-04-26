@@ -26,8 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   selections, onRemoveSelection, onClearSelections, onPlaceBet, betHistory, balance, isDark,
   showGradient, onToggleGradient, activeLoan, onRepayFull, onRepayPartial,
 }) => {
-  // 🔹 Добавили setAvatar
-  const { user, logout, setAvatar } = useAuth();
+  const { user, logout, setAvatar, updateUser } = useAuth(); // 🔹 Добавили updateUser
   
   const [activeTab, setActiveTab] = useState<'betSlip' | 'history'>('betSlip');
   const [stake, setStake] = useState('');
@@ -59,9 +58,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     setTimeout(() => { onPlaceBet(stakeNum); setStake(''); setIsPlacing(false); }, 800);
   };
 
+  // 🔹 ИСПРАВЛЕНО: Теперь никнейм реально сохраняется
   const handleSaveNick = () => {
-    if (nickInput.length >= 2 && user && nickInput !== user.nickname) {
-      // updateUserData({ nickname: nickInput.trim() });
+    if (nickInput.trim().length >= 2 && user && nickInput.trim() !== user.nickname) {
+      updateUser({ nickname: nickInput.trim() });
     }
     setEditingNick(false);
   };
@@ -76,23 +76,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className={`${bg} border-l ${border} h-full lg:h-[calc(100vh-88px)] lg:sticky lg:top-[88px] flex flex-col overflow-hidden transition-colors duration-300 w-80`}>
       
-      {/* 🔹 Модальное окно кропа */}
       {cropImage && (
         <AvatarCrop
           imageSrc={cropImage}
           onCrop={async (dataUrl) => { 
-            console.log('🔄 [Sidebar] onCrop вызван, сохраняю аватарку...');
-            if (setAvatar) {
-              await setAvatar(dataUrl);
-            } else {
-              console.error('❌ [Sidebar] setAvatar не найден!');
-            }
+            await setAvatar(dataUrl); 
             setCropImage(null); 
           }}
-          onCancel={() => {
-            console.log('❌ [Sidebar] Отмена кропа');
-            setCropImage(null);
-          }}
+          onCancel={() => setCropImage(null)}
         />
       )}
 
@@ -120,6 +111,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               />
             ) : (
               <div className="flex items-center gap-1.5">
+                {/* 🔹 Отображение ника */}
                 <span className="text-sm font-bold gradient-nickname truncate block">{user?.nickname || 'Игрок'}</span>
                 <button
                   onClick={() => { setEditingNick(true); setNickInput(user?.nickname || ''); }}

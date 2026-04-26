@@ -43,7 +43,7 @@ function formatRelativeTime(match: Match): string {
 }
 
 const AppContent: React.FC = () => {
-  const { user, isAuthenticated, login, register, updateBalance, addToHistory, updateBetStatus } = useAuth();
+  const { user, isAuthenticated, login, register, updateBalance, addToHistory, updateBetStatus, updateUser } = useAuth();
   
   const [isDark, setIsDark] = useState(true);
   const [page, setPage] = useState<'home' | 'stats'>('home');
@@ -74,28 +74,32 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('resize', h);
   }, []);
 
-  // Симуляция матчей
+  // 🔹 СИМУЛЯЦИЯ МАТЧЕЙ: Время идет, матчи заканчиваются
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => {
-        const updated = prev.map(m => {
+        return prev.map(m => {
           if (!m.isLive) return m;
+          
           const s1 = m.score1 || 0;
           const s2 = m.score2 || 0;
+          // Рандомный гол с шансом 15%
           const newS1 = Math.random() < 0.15 ? s1 + 1 : s1;
           const newS2 = Math.random() < 0.15 ? s2 + 1 : s2;
           const newTime = (m._simTime || 0) + 1;
+          
+          // Матч длится ~40 тиков
           if (newTime >= 40 + Math.random() * 20) {
             return { ...m, isLive: false, score1: newS1, score2: newS2, _simTime: newTime, status: 'finished' };
           }
           return { ...m, score1: newS1, score2: newS2, _simTime: newTime };
         });
-        return updated.filter(m => m.isLive || (m._simTime || 0) < 50);
       });
-    }, 1500);
+    }, 1000);
     return () => clearInterval(interval);
   }, []);
 
+  // Обновление коэффициентов
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => prev.map(m => ({
@@ -103,7 +107,7 @@ const AppContent: React.FC = () => {
         odds1: jitter(m.odds1, 0.02),
         odds2: jitter(m.odds2, 0.02),
       })));
-    }, 4000);
+    }, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -122,7 +126,7 @@ const AppContent: React.FC = () => {
     setSelections((prev) => prev.filter((s) => s.matchId !== matchId));
   }, []);
 
-  // 🔹 ИСПРАВЛЕНО: используем addToHistory вместо updateHistory
+  // 🔹 СТАВКИ: Добавляем в историю
   const handlePlaceBet = useCallback(async (stake: number) => {
     const totalOdds = selections.reduce((a, s) => a * s.odds, 1);
     const potentialWin = Math.round(stake * totalOdds * 100) / 100;
@@ -138,24 +142,26 @@ const AppContent: React.FC = () => {
     };
 
     await updateBalance(newBalance);
-    await addToHistory(newBet); // 🔹 Добавляем в историю
+    await addToHistory(newBet);
     setSelections([]);
 
+    // Имитация результата
     setTimeout(async () => {
       const isWin = Math.random() > 0.5;
       if (isWin) {
-        await updateBalance(balance - stake + potentialWin);
+        await updateBalance(newBalance + potentialWin);
       }
       await updateBetStatus(newBet.id, isWin ? 'won' : 'lost');
     }, 10000 + Math.random() * 10000);
   }, [selections, balance, updateBalance, addToHistory, updateBetStatus]);
 
+  // 🔹 ЗАЙМЫ: Быстрое закрытие меню (Optimistic UI)
   const handleTakeLoan = async (amount: number, days: number) => {
     if (!user) return;
-    takeLoan(amount, days);
-    await updateBalance(balance + amount);
+    takeLoan(amount, days); // Локальное обновление
     setDepositStep(null);
-    setShowDeposit(false);
+    setShowDeposit(false); // Закрываем МГНОВЕННО
+    await updateBalance(balance + amount); // Обновляем баланс в фоне
   };
 
   const handleRepayFull = async () => {
@@ -248,12 +254,7 @@ const AppContent: React.FC = () => {
             <div className="p-8 text-center">
               <div className="text-4xl mb-3">{depositStep === 'card' ? '💳' : '🎟️'}</div>
               <p className={`text-sm ${textS}`}>Этот способ пополнения скоро будет доступен</p>
-              <button
-                onClick={() => setDepositStep('modal')}
-                className="mt-6 bg-gradient-to-r from-amber-400 to-yellow-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                Понятно
-              </button>
+              <button onClick={() => setDepositStep('modal')} className="mt-6 bg-gradient-to-r from-amber-400 to-yellow-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl hover:opacity-90 transition-opacity cursor-pointer">Понятно</button>
             </div>
           </div>
         </div>
