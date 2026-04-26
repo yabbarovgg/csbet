@@ -5,7 +5,10 @@ import { supabase } from '../lib/supabase';
 interface User {
   id: string;
   balance: number;
-  settings: any;
+  settings: {
+    showGradient?: boolean;
+    avatar?: string;
+  };
   history: any[];
 }
 
@@ -17,6 +20,7 @@ interface AuthContextType {
   logout: () => void;
   updateBalance: (newBalance: number) => Promise<void>;
   updateHistory: (newHistory: any[]) => Promise<void>;
+  setAvatar: (avatarUrl: string) => Promise<void>; // 🔹 Добавили
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -97,6 +101,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
+  // 🔹 Функция сохранения аватарки
+  const setAvatar = async (avatarUrl: string) => {
+    if (!user) {
+      console.warn('⚠️ [Auth] setAvatar вызван, но user === null');
+      return;
+    }
+
+    try {
+      console.log('💾 [Auth] Сохраняю аватарку в Supabase...');
+      const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
+
+      // Оптимистичное обновление UI
+      setUser(prev => prev ? { ...prev, settings: newSettings } : null);
+
+      // Запись в БД
+      const { error } = await supabase
+        .from('users')
+        .update({ settings: newSettings })
+        .eq('id', 'admin');
+
+      if (error) throw error;
+      console.log('✅ [Auth] Аватарка успешно сохранена в БД!');
+    } catch (err) {
+      console.error('❌ [Auth] Ошибка сохранения аватарки:', err);
+      // Откат UI при ошибке
+      setUser(prev => prev || null);
+      alert('Не удалось сохранить аватарку. Проверь консоль (F12).');
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       isAuthenticated, 
@@ -105,7 +139,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       login, 
       logout,
       updateBalance, 
-      updateHistory 
+      updateHistory,
+      setAvatar, // 🔹 Добавили в return
     }}>
       {children}
     </AuthContext.Provider>
