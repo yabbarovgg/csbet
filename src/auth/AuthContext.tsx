@@ -19,8 +19,8 @@ interface AuthContextType {
   login: (password: string) => Promise<void>;
   logout: () => void;
   updateBalance: (newBalance: number) => Promise<void>;
-  updateHistory: (newHistory: any[]) => Promise<void>;
-  setAvatar: (avatarUrl: string) => Promise<void>; // 🔹 Добавили
+  updateHistory: (newHistory: any[] | ((prev: any[]) => any[])) => Promise<void>;
+  setAvatar: (avatarUrl: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -30,12 +30,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 🔹 При загрузке проверяем, есть ли сохранённая сессия
   useEffect(() => {
     const checkSession = async () => {
       const saved = localStorage.getItem('csbet_auth');
       if (saved === 'true') {
-        // Пытаемся загрузить данные из базы
         const { data } = await supabase
           .from('users')
           .select('*')
@@ -78,13 +76,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setUser(data);
     }
 
-    // 🔹 Сохраняем сессию в localStorage
     localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
     setLoading(false);
   };
 
-  // 🔹 Функция выхода
   const logout = () => {
     localStorage.removeItem('csbet_auth');
     setUser(null);
@@ -96,12 +92,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
   };
 
-  const updateHistory = async (newHistory: any[]) => {
-    setUser(prev => prev ? { ...prev, history: newHistory } : null);
-    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+  // 🔹 ИСПРАВЛЕНО: принимаем массив ИЛИ функцию
+  const updateHistory = async (newHistory: any[] | ((prev: any[]) => any[])) => {
+    if (!user) return;
+    
+    const historyArray = typeof newHistory === 'function' 
+      ? newHistory(user.history || []) 
+      : newHistory;
+
+    setUser(prev => prev ? { ...prev, history: historyArray } : null);
+
+    const { error } = await supabase
+      .from('users')
+      .update({ history: historyArray })
+      .eq('id', 'admin');
+
+    if (error) {
+      console.error('❌ Ошибка сохранения истории:', error);
+      setUser(prev => prev || null);
+    }
   };
 
-  // 🔹 Функция сохранения аватарки
   const setAvatar = async (avatarUrl: string) => {
     if (!user) {
       console.warn('⚠️ [Auth] setAvatar вызван, но user === null');
@@ -112,10 +123,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.log('💾 [Auth] Сохраняю аватарку в Supabase...');
       const newSettings = { ...(user.settings || {}), avatar: avatarUrl };
 
-      // Оптимистичное обновление UI
       setUser(prev => prev ? { ...prev, settings: newSettings } : null);
 
-      // Запись в БД
       const { error } = await supabase
         .from('users')
         .update({ settings: newSettings })
@@ -125,7 +134,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.log('✅ [Auth] Аватарка успешно сохранена в БД!');
     } catch (err) {
       console.error('❌ [Auth] Ошибка сохранения аватарки:', err);
-      // Откат UI при ошибке
       setUser(prev => prev || null);
       alert('Не удалось сохранить аватарку. Проверь консоль (F12).');
     }
@@ -140,7 +148,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       logout,
       updateBalance, 
       updateHistory,
-      setAvatar, // 🔹 Добавили в return
+      setAvatar,
     }}>
       {children}
     </AuthContext.Provider>

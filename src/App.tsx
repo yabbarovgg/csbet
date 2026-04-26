@@ -45,14 +45,12 @@ function formatRelativeTime(match: Match): string {
 }
 
 const AppContent: React.FC = () => {
-  // Забираем данные из контекста (Базы данных)
   const { user, isAuthenticated, login, register, updateBalance, updateHistory } = useAuth();
   
   const [isDark, setIsDark] = useState(true);
   const [page, setPage] = useState<'home' | 'stats'>('home');
   const [selections, setSelections] = useState<BetSelection[]>([]);
   
-  // Теперь баланс и история идут из базы, но для UI используем дефолты если null
   const balance = user?.balance ?? 15420;
   const betHistory = user?.history ?? [];
   
@@ -61,27 +59,16 @@ const AppContent: React.FC = () => {
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState<'left' | 'right' | null>(null);
 
-  // Deposit states
   const [showDeposit, setShowDeposit] = useState(false);
   const [depositStep, setDepositStep] = useState<'modal' | 'loan' | 'card' | 'promo' | null>(null);
 
-  // Loans & notifications
   const userId = user?.id ? String(user.id) : null;
   const { activeLoan, hasEverHadLoan, totalActiveDebt, notifications, unreadCount, takeLoan, repayOldest, markAllRead, clearNotifications } = useLoans(userId);
 
-  // Live data (визуальная имитация, хранится локально)
   const [liveData, setLiveData] = useState<Match[]>(initialLive);
   const [upcomingData] = useState<Match[]>(initialUpcoming);
 
   useEffect(() => { document.documentElement.classList.toggle('light', !isDark); }, [isDark]);
-
-  // Синхронизация темы из настроек юзера (если нужно)
-  useEffect(() => {
-    if (user) { 
-      // Если нужно сохранять тему в БД, раскомментируй строку ниже:
-      // setShowGradient(user.settings?.showGradient ?? true); 
-    }
-  }, [user]);
 
   useEffect(() => {
     const h = () => { if (window.innerWidth >= 1024) setMobileMenu(null); };
@@ -89,7 +76,6 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('resize', h);
   }, []);
 
-  // Real-time: live odds every 5s
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData((prev) => prev.map((m) => ({
@@ -116,7 +102,7 @@ const AppContent: React.FC = () => {
     setSelections((prev) => prev.filter((s) => s.matchId !== matchId));
   }, []);
 
-  // --- ГЛАВНОЕ ИЗМЕНЕНИЕ: Работа с БД ---
+  // 🔹 ИСПРАВЛЕНО: используем функциональное обновление истории
   const handlePlaceBet = useCallback(async (stake: number) => {
     const totalOdds = selections.reduce((a, s) => a * s.odds, 1);
     const potentialWin = Math.round(stake * totalOdds * 100) / 100;
@@ -131,36 +117,35 @@ const AppContent: React.FC = () => {
       status: 'pending',
     };
 
-    // 1. Списываем ставку и добавляем в историю СРАЗУ (оптимистично)
+    // 1. Списываем баланс
     await updateBalance(newBalance);
-    await updateHistory([newBet, ...betHistory]);
+    
+    // 🔹 2. Обновляем историю через функциональный апдейт
+    await updateHistory((prevHistory: any[]) => [newBet, ...(prevHistory || [])]);
     
     setSelections([]);
 
-    // 2. Имитация задержки и результата
+    // 3. Имитация результата
     setTimeout(async () => {
-      const isWin = Math.random() > 0.5; // 50% шанс для симулятора
+      const isWin = Math.random() > 0.5;
       const winAmount = isWin ? potentialWin : 0;
       
       if (isWin) {
         const winBalance = newBalance + winAmount;
         await updateBalance(winBalance);
-        // Можно добавить запись о выигрыше в историю, если нужно
       }
       
-      // Обновляем статус ставки в истории (визуально)
-      const updatedHistory = betHistory.map((b) => 
-        (b.id === newBet.id ? { ...b, status: isWin ? 'won' : 'lost' } : b)
+      // Обновляем статус ставки
+      await updateHistory((prevHistory: any[]) => 
+        (prevHistory || []).map((b) => 
+          (b.id === newBet.id ? { ...b, status: isWin ? 'won' : 'lost' } : b)
+        )
       );
-      await updateHistory(updatedHistory);
-      
     }, 10000 + Math.random() * 10000);
-  }, [selections, balance, betHistory, updateBalance, updateHistory]);
+  }, [selections, balance, updateBalance, updateHistory]);
 
-  // Deposit handlers (пока работают локально, так как это симулятор)
   const handleTakeLoan = useCallback((amount: number, days: number) => {
     if (!user) return;
-    // Логика займа...
     setDepositStep(null);
     setShowDeposit(false);
   }, [user]);
@@ -181,7 +166,6 @@ const AppContent: React.FC = () => {
     }
   }, [activeLoan, balance, user]);
 
-  // Filter matches
   const filterMatches = (matches: Match[]) => {
     let result = matches;
     if (selectedMatchId) return result.filter((m) => m.id === selectedMatchId);
@@ -226,7 +210,6 @@ const AppContent: React.FC = () => {
         notifications={notificationsComponent}
       />
 
-      {/* Modals */}
       {showDeposit && depositStep === 'modal' && (
         <DepositModal
           isDark={isDark}
@@ -266,7 +249,6 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile buttons */}
       <div className="lg:hidden fixed bottom-4 right-4 z-50 flex flex-col gap-3">
         <button onClick={() => setMobileMenu(mobileMenu === 'left' ? null : 'left')}
           className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg cursor-pointer ${isDark ? 'bg-[#1a1a1a] text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}>
@@ -286,7 +268,6 @@ const AppContent: React.FC = () => {
       )}
 
       <div className="flex">
-        {/* Left sidebar */}
         <div className={`lg:static fixed top-[88px] left-0 bottom-0 z-40 transition-transform duration-300 ${
           mobileMenu === 'left' ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}>
@@ -348,7 +329,6 @@ const AppContent: React.FC = () => {
           )}
         </main>
 
-        {/* Right sidebar */}
         <div className={`lg:static fixed top-[88px] right-0 bottom-0 z-40 transition-transform duration-300 ${
           mobileMenu === 'right' ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
         }`}>
@@ -377,7 +357,6 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <div className="App">
-       {/* Здесь провайдер уже должен быть в main.tsx или внутри AuthProvider, если он так настроен */}
        <AppContent />
     </div>
   );
