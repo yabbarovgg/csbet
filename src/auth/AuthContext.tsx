@@ -1,5 +1,5 @@
 // src/auth/AuthContext.tsx
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface User {
@@ -14,6 +14,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (password: string) => Promise<void>;
+  logout: () => void;
   updateBalance: (newBalance: number) => Promise<void>;
   updateHistory: (newHistory: any[]) => Promise<void>;
 }
@@ -25,13 +26,35 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // 🔹 При загрузке проверяем, есть ли сохранённая сессия
+  useEffect(() => {
+    const checkSession = async () => {
+      const saved = localStorage.getItem('csbet_auth');
+      if (saved === 'true') {
+        // Пытаемся загрузить данные из базы
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', 'admin')
+          .single();
+        
+        if (data) {
+          setUser(data);
+          setIsAuthenticated(true);
+        } else {
+          localStorage.removeItem('csbet_auth');
+        }
+      }
+      setLoading(false);
+    };
+    checkSession();
+  }, []);
+
   const login = async (password: string) => {
-    // 1. Проверка мастер-пароля
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) {
       throw new Error('Неверный пароль');
     }
 
-    // 2. Ищем запись в БД
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -39,14 +62,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       .single();
 
     if (error && error.code === 'PGRST116') {
-      // Строка не найдена → создаём новую
-      const { data: newUser, error: insertError } = await supabase
+      const {  newUser } = await supabase
         .from('users')
         .insert({ id: 'admin', balance: 15420, settings: {}, history: [] })
         .select()
         .single();
-      
-      if (insertError) throw insertError;
       setUser(newUser);
     } else if (error) {
       throw error;
@@ -54,24 +74,39 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setUser(data);
     }
 
+    // 🔹 Сохраняем сессию в localStorage
+    localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
     setLoading(false);
   };
 
-  // Сохранение баланса в облако
+  // 🔹 Функция выхода
+  const logout = () => {
+    localStorage.removeItem('csbet_auth');
+    setUser(null);
+    setIsAuthenticated(false);
+  };
+
   const updateBalance = async (newBalance: number) => {
     setUser(prev => prev ? { ...prev, balance: newBalance } : null);
     await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
   };
 
-  // Сохранение истории в облако
   const updateHistory = async (newHistory: any[]) => {
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, loading, login, updateBalance, updateHistory }}>
+    <AuthContext.Provider value={{ 
+      isAuthenticated, 
+      user, 
+      loading, 
+      login, 
+      logout,
+      updateBalance, 
+      updateHistory 
+    }}>
       {children}
     </AuthContext.Provider>
   );

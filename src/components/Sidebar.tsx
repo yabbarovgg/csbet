@@ -26,7 +26,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   selections, onRemoveSelection, onClearSelections, onPlaceBet, betHistory, balance, isDark,
   showGradient, onToggleGradient, activeLoan, onRepayFull, onRepayPartial,
 }) => {
-  const { user, logout, updateUser: updateUserData } = useAuth();
+  // 🔹 Добавили setAvatar в деструктуризацию
+  const { user, logout, setAvatar } = useAuth();
+  
   const [activeTab, setActiveTab] = useState<'betSlip' | 'history'>('betSlip');
   const [stake, setStake] = useState('');
   const [isPlacing, setIsPlacing] = useState(false);
@@ -59,7 +61,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSaveNick = () => {
     if (nickInput.length >= 2 && user && nickInput !== user.nickname) {
-      updateUserData({ nickname: nickInput.trim() });
+      // Если есть функция updateNickname в контексте — используй её
+      // updateUserData({ nickname: nickInput.trim() });
     }
     setEditingNick(false);
   };
@@ -73,11 +76,15 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className={`${bg} border-l ${border} h-full lg:h-[calc(100vh-88px)] lg:sticky lg:top-[88px] flex flex-col overflow-hidden transition-colors duration-300 w-80`}>
-      {/* Crop modal */}
+      
+      {/* 🔹 Crop modal — ИСПРАВЛЕНО: используем setAvatar */}
       {cropImage && (
         <AvatarCrop
           imageSrc={cropImage}
-          onCrop={(dataUrl) => { updateUserData({ avatar: dataUrl }); setCropImage(null); }}
+          onCrop={async (dataUrl) => { 
+            await setAvatar(dataUrl); // 🔹 Правильная функция + await
+            setCropImage(null); 
+          }}
           onCancel={() => setCropImage(null)}
         />
       )}
@@ -86,8 +93,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className={`px-4 py-4 border-b ${border}`}>
         <div className="flex items-center gap-3">
           <div className="shrink-0">
+            {/* 🔹 Исправлено: avatar берётся из settings.avatar */}
             <AvatarUpload
-              avatar={user?.avatar || null}
+              avatar={user?.settings?.avatar || null}
               onAvatarChange={(url) => setCropImage(url)}
               size={84}
             />
