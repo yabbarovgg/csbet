@@ -26,7 +26,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   selections, onRemoveSelection, onClearSelections, onPlaceBet, betHistory, balance, isDark,
   showGradient, onToggleGradient, activeLoan, onRepayFull, onRepayPartial,
 }) => {
-  const { user, logout, setAvatar, updateUser } = useAuth();
+  // 🔹 Берём только нужные функции из контекста
+  const { user, logout, setAvatar, setNickname } = useAuth();
+  
   const [activeTab, setActiveTab] = useState<'betSlip' | 'history'>('betSlip');
   const [stake, setStake] = useState('');
   const [isPlacing, setIsPlacing] = useState(false);
@@ -57,9 +59,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     setTimeout(() => { onPlaceBet(stakeNum); setStake(''); setIsPlacing(false); }, 600);
   };
 
-  const handleSaveNick = () => {
+  // 🔹 Сохранение ника через новую функцию контекста
+  const handleSaveNick = async () => {
     if (nickInput.trim().length >= 2 && user && nickInput.trim() !== user.nickname) {
-      updateUser({ nickname: nickInput.trim() });
+      try {
+        await setNickname(nickInput.trim());
+      } catch (err) {
+        console.error('Failed to save nickname:', err);
+        alert('Не удалось сохранить никнейм');
+      }
     }
     setEditingNick(false);
   };
@@ -73,15 +81,26 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className={`${bg} border-l ${border} h-full lg:h-[calc(100vh-88px)] lg:sticky lg:top-[88px] flex flex-col overflow-hidden transition-colors duration-300 w-80`}>
+      
+      {/* 🔹 Модальное окно кропа аватарки */}
       {cropImage && (
         <AvatarCrop
           imageSrc={cropImage}
           isDark={isDark}
-          onCrop={async (dataUrl) => { await setAvatar(dataUrl); setCropImage(null); }}
+          onCrop={async (dataUrl) => {
+            try {
+              await setAvatar(dataUrl);
+            } catch (err) {
+              console.error('Failed to save avatar:', err);
+              alert('Не удалось сохранить аватарку');
+            }
+            setCropImage(null);
+          }}
           onCancel={() => setCropImage(null)}
         />
       )}
 
+      {/* Профиль */}
       <div className={`px-4 py-4 border-b ${border}`}>
         <div className="flex items-center gap-3">
           <div className="shrink-0">
@@ -89,21 +108,33 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="flex-1 min-w-0">
             {editingNick ? (
-              <input autoFocus type="text" value={nickInput} onChange={(e) => setNickInput(e.target.value)}
+              <input
+                autoFocus
+                type="text"
+                value={nickInput}
+                onChange={(e) => setNickInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleSaveNick(); if (e.key === 'Escape') setEditingNick(false); }}
                 onBlur={handleSaveNick}
                 className={`w-full border border-yellow-400/30 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-yellow-400/50 ${isDark ? 'bg-white/5 text-white' : 'bg-gray-100 text-gray-900'}`}
-                maxLength={30} />
+                maxLength={30}
+              />
             ) : (
               <div className="flex items-center gap-1.5">
                 <span className="text-sm font-bold gradient-nickname truncate block">{user?.nickname || 'Игрок'}</span>
-                <button onClick={() => { setEditingNick(true); setNickInput(user?.nickname || ''); }}
-                  className="shrink-0 w-4 h-4 flex items-center justify-center text-gray-500 hover:text-yellow-400 transition-colors cursor-pointer" title="Изменить ник">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+                <button
+                  onClick={() => { setEditingNick(true); setNickInput(user?.nickname || ''); }}
+                  className="shrink-0 w-4 h-4 flex items-center justify-center text-gray-500 hover:text-yellow-400 transition-colors cursor-pointer"
+                  title="Изменить ник"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                  </svg>
                 </button>
-                <button onClick={onToggleGradient}
+                <button
+                  onClick={onToggleGradient}
                   className={`w-4 h-4 rounded shrink-0 transition-all cursor-pointer ${showGradient ? 'bg-gradient-to-r from-yellow-400 via-green-400 to-blue-400 opacity-60 hover:opacity-100' : isDark ? 'bg-white/10 opacity-40 hover:opacity-70' : 'bg-gray-200 opacity-40 hover:opacity-70'}`}
-                  title={showGradient ? 'Выключить градиент' : 'Включить градиент'} />
+                  title={showGradient ? 'Выключить градиент' : 'Включить градиент'}
+                />
               </div>
             )}
             <div className="flex items-center gap-2 mt-1.5">
@@ -114,6 +145,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
+      {/* Табы */}
       <div className={`flex border-b ${border}`}>
         <button onClick={() => setActiveTab('betSlip')} className={`flex-1 py-3 text-sm font-semibold transition-all relative ${activeTab === 'betSlip' ? textP : inactiveTab}`}>
           <span className="flex items-center justify-center gap-2">Купон {selections.length > 0 && <span className="bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">{selections.length}</span>}</span>
@@ -125,6 +157,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
+      {/* Контент */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'betSlip' ? (
           <div className="p-4">

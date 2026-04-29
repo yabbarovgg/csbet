@@ -1,235 +1,241 @@
-// src/auth/AuthContext.tsx
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface User {
   id: string;
   nickname: string;
   balance: number;
-  settings: { showGradient?: boolean; avatar?: string | null };
+  settings: { 
+    showGradient?: boolean; 
+    avatar?: string | null;
+  };
   history: any[];
 }
 
 interface AuthContextType {
-  isAuthenticated: boolean;
   user: User | null;
   loading: boolean;
   login: (password: string) => Promise<void>;
   logout: () => void;
-  updateBalance: (newBalance: number) => Promise<void>;
+  updateBalance: (amount: number) => Promise<void>;
   addToHistory: (bet: any) => Promise<void>;
   updateBetStatus: (betId: string, status: 'won' | 'lost') => Promise<void>;
-  setAvatar: (avatarUrl: string) => Promise<void>;
-  updateUser: (updates: Partial<User>) => Promise<void>;
+  setAvatar: (url: string) => Promise<void>;
+  setNickname: (nick: string) => Promise<void>;
+  toggleGradient: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  const userRef = useRef(user);
-  useEffect(() => { userRef.current = user; }, [user]);
 
-  const normalizeUser = (userData: any): User => ({
-    id: userData.id,
-    nickname: userData.nickname || 'Игрок',
-    balance: userData.balance ?? 0,
-    settings: userData.settings || { showGradient: true, avatar: null },
-    history: userData.history || []
-  });
-
-  // 🔹 Восстановление сессии
+  // Загрузка пользователя при старте
   useEffect(() => {
-    let isMounted = true;
-    const checkSession = async () => {
-      const saved = localStorage.getItem('csbet_auth');
-      if (saved === 'true') {
-        const res = await supabase.from('users').select('*').eq('id', 'admin').single();
-        if (res.data && !res.error && isMounted) {
-          setUser(normalizeUser(res.data));
-          setIsAuthenticated(true);
-        }
-      }
-      if (isMounted) setLoading(false);
-    };
-    checkSession();
-    return () => { isMounted = false; };
+    loadUser();
   }, []);
 
-  // 🔹 Вспомогательная функция: принудительно обновить данные из БД
-  const refreshUserData = async () => {
-    const res = await supabase.from('users').select('*').eq('id', 'admin').single();
-    if (res.data && !res.error) {
-      setUser(normalizeUser(res.data));
-      return true;
-    }
-    console.error('❌ [Refresh] Не удалось обновить данные:', res.error);
-    return false;
-  };
+  async function loadUser() {
+    try {
+      const saved = localStorage.getItem('csbet_auth');
+      if (saved !== 'true') {
+        setLoading(false);
+        return;
+      }
 
-  const login = async (password: string) => {
-    if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', 'admin')
+        .single();
 
-    let userData: any = null;
-    const resFind = await supabase.from('users').select('*').eq('id', 'admin').single();
-    userData = resFind.data;
+      if (error || !data) {
+        console.error('Failed to load user:', error);
+        localStorage.removeItem('csbet_auth');
+        setLoading(false);
+        return;
+      }
 
-    if (!userData) {
-      await supabase.from('users').insert({
-        id: 'admin',
-        balance: 15420,
-        settings: {},
-        history: [],
-        nickname: 'Игрок'
+      setUser({
+        id: data.id,
+        nickname: data.nickname || 'Игрок',
+        balance: data.balance || 0,
+        settings: data.settings || { showGradient: true, avatar: null },
+        history: data.history || []
       });
-      const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
-      userData = resCreate.data;
+    } catch (err) {
+      console.error('Error loading user:', err);
+      localStorage.removeItem('csbet_auth');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function login(password: string) {
+    if (password !== import.meta.env.VITE_MASTER_PASSWORD) {
+      throw new Error('Неверный пароль');
     }
 
-    if (!userData) throw new Error('Не удалось загрузить аккаунт');
-    
-    setUser(normalizeUser(userData));
-    localStorage.setItem('csbet_auth', 'true');
-    setIsAuthenticated(true);
-    setLoading(false);
-  };
+    // Проверяем, есть ли пользователь
+    const { data: existing } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', 'admin')
+      .single();
 
-  const logout = () => {
+    let userData = existing;
+
+    // Если нет - создаём
+    if (!userData) {
+      const { data: newUser, error } = await supabase
+        .from('users')
+        .insert({
+          id: 'admin',
+          nickname: 'Игрок',
+          balance: 15420,
+          settings: { showGradient: true, avatar: null },
+          history: []
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      userData = newUser;
+    }
+
+    setUser({
+      id: userData.id,
+      nickname: userData.nickname || 'Игрок',
+      balance: userData.balance || 0,
+      settings: userData.settings || { showGradient: true, avatar: null },
+      history: userData.history || []
+    });
+
+    localStorage.setItem('csbet_auth', 'true');
+  }
+
+  function logout() {
     localStorage.removeItem('csbet_auth');
     setUser(null);
-    setIsAuthenticated(false);
-  };
+  }
 
-  // 🔹 ИСПРАВЛЕНО: ждём ответа от БД + принудительное обновление
-  const updateUser = async (updates: Partial<User>) => {
-    console.log('💾 [Update] Сохраняю изменения:', updates);
-    
-    const { error } = await supabase
-      .from('users')
-      .update(updates)
-      .eq('id', 'admin');
-    
-    if (error) {
-      console.error('❌ [Update] Ошибка сохранения:', error);
-      alert('Не удалось сохранить: ' + error.message);
-      return;
-    }
-
-    // Принудительно обновляем данные из БД
-    await refreshUserData();
-    console.log('✅ [Update] Успешно сохранено и обновлено');
-  };
-
-  const updateBalance = async (newBalance: number) => {
-    console.log('💰 [Balance] Обновляю баланс:', newBalance);
+  async function updateBalance(newBalance: number) {
+    if (!user) return;
     
     const { error } = await supabase
       .from('users')
       .update({ balance: newBalance })
       .eq('id', 'admin');
+
+    if (error) throw error;
     
-    if (error) {
-      console.error('❌ [Balance] Ошибка:', error);
-      return;
-    }
+    setUser({ ...user, balance: newBalance });
+  }
 
-    await refreshUserData();
-  };
+  async function addToHistory(bet: any) {
+    if (!user) return;
 
-  const addToHistory = async (bet: any) => {
-    console.log('📝 [History] Добавляю ставку:', bet);
+    const newHistory = [bet, ...user.history];
     
-    // Читаем текущую историю
-    const res = await supabase.from('users').select('history').eq('id', 'admin').single();
-    if (res.error) {
-      console.error('❌ [History] Ошибка чтения:', res.error);
-      return;
-    }
-
-    const currentHistory = res.data?.history || [];
-    const newHistory = [bet, ...currentHistory];
-
-    // Записываем обновлённую историю
     const { error } = await supabase
       .from('users')
       .update({ history: newHistory })
       .eq('id', 'admin');
+
+    if (error) throw error;
     
-    if (error) {
-      console.error('❌ [History] Ошибка записи:', error);
-      alert('Не удалось сохранить ставку: ' + error.message);
-      return;
-    }
+    setUser({ ...user, history: newHistory });
+  }
 
-    await refreshUserData();
-    console.log('✅ [History] Ставка сохранена');
-  };
+  async function updateBetStatus(betId: string, status: 'won' | 'lost') {
+    if (!user) return;
 
-  const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
-    console.log('🎯 [Status] Обновляю статус ставки:', betId, status);
-    
-    const res = await supabase.from('users').select('history').eq('id', 'admin').single();
-    if (res.error || !res.data) {
-      console.error('❌ [Status] Ошибка чтения:', res.error);
-      return;
-    }
-
-    const newHistory = res.data.history.map((b: any) => 
-      b.id === betId ? { ...b, status } : b
+    const newHistory = user.history.map((bet: any) => 
+      bet.id === betId ? { ...bet, status } : bet
     );
 
     const { error } = await supabase
       .from('users')
       .update({ history: newHistory })
       .eq('id', 'admin');
-    
-    if (error) {
-      console.error('❌ [Status] Ошибка записи:', error);
-      return;
-    }
 
-    await refreshUserData();
-    console.log('✅ [Status] Статус обновлён');
-  };
+    if (error) throw error;
+    
+    setUser({ ...user, history: newHistory });
+  }
 
-  const setAvatar = async (avatarUrl: string) => {
-    console.log('🖼️ [Avatar] Сохраняю аватарку');
-    
-    const currentUser = userRef.current;
-    if (!currentUser) return;
-    
-    const newSettings = { ...(currentUser.settings || {}), avatar: avatarUrl };
-    
+  async function setAvatar(url: string) {
+    if (!user) return;
+
+    const newSettings = {
+      ...user.settings,
+      avatar: url
+    };
+
     const { error } = await supabase
       .from('users')
       .update({ settings: newSettings })
       .eq('id', 'admin');
-    
-    if (error) {
-      console.error('❌ [Avatar] Ошибка:', error);
-      alert('Не удалось сохранить аватарку: ' + error.message);
-      return;
-    }
 
-    await refreshUserData();
-    console.log('✅ [Avatar] Аватарка сохранена');
-  };
+    if (error) throw error;
+    
+    setUser({ ...user, settings: newSettings });
+  }
+
+  async function setNickname(nick: string) {
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('users')
+      .update({ nickname: nick })
+      .eq('id', 'admin');
+
+    if (error) throw error;
+    
+    setUser({ ...user, nickname: nick });
+  }
+
+  async function toggleGradient() {
+    if (!user) return;
+
+    const newSettings = {
+      ...user.settings,
+      showGradient: !user.settings.showGradient
+    };
+
+    const { error } = await supabase
+      .from('users')
+      .update({ settings: newSettings })
+      .eq('id', 'admin');
+
+    if (error) throw error;
+    
+    setUser({ ...user, settings: newSettings });
+  }
 
   return (
-    <AuthContext.Provider value={{ 
-      isAuthenticated, user, loading, login, logout, 
-      updateBalance, addToHistory, updateBetStatus, setAvatar, updateUser 
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      login,
+      logout,
+      updateBalance,
+      addToHistory,
+      updateBetStatus,
+      setAvatar,
+      setNickname,
+      toggleGradient
     }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => {
+export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
   return context;
-};
+}
