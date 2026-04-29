@@ -41,28 +41,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     history: userData.history || []
   });
 
-  // 🔹 ВОССТАНОВЛЕНИЕ СЕССИИ С ДИАГНОСТИКОЙ
+  // 🔹 Восстановление сессии
   useEffect(() => {
     let isMounted = true;
     const checkSession = async () => {
-      console.log('🔍 [Auth] Проверка сессии при загрузке...');
       const saved = localStorage.getItem('csbet_auth');
-      
       if (saved === 'true') {
-        try {
-          const res = await supabase.from('users').select('*').eq('id', 'admin').single();
-          console.log('📥 [Auth] Ответ Supabase:', res);
-
-          if (res.error) {
-            console.error('❌ [Auth] Ошибка Supabase при загрузке:', res.error);
-            // НЕ очищаем localStorage при ошибке, чтобы пользователь мог войти заново
-          } else if (res.data && isMounted) {
-            console.log('✅ [Auth] Сессия успешно восстановлена!');
-            setUser(normalizeUser(res.data));
-            setIsAuthenticated(true);
-          }
-        } catch (err) {
-          console.error('❌ [Auth] Исключение при checkSession:', err);
+        const res = await supabase.from('users').select('*').eq('id', 'admin').single();
+        if (res.data && !res.error && isMounted) {
+          setUser(normalizeUser(res.data));
+          setIsAuthenticated(true);
         }
       }
       if (isMounted) setLoading(false);
@@ -70,6 +58,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     checkSession();
     return () => { isMounted = false; };
   }, []);
+
+  // 🔹 Вспомогательная функция: принудительно обновить данные из БД
+  const refreshUserData = async () => {
+    const res = await supabase.from('users').select('*').eq('id', 'admin').single();
+    if (res.data && !res.error) {
+      setUser(normalizeUser(res.data));
+      return true;
+    }
+    console.error('❌ [Refresh] Не удалось обновить данные:', res.error);
+    return false;
+  };
 
   const login = async (password: string) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
@@ -79,24 +78,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     userData = resFind.data;
 
     if (!userData) {
-      try {
-        await supabase.from('users').insert({
-          id: 'admin',
-          balance: 15420,
-          settings: {},
-          history: [],
-          nickname: 'Игрок'
-        });
-        const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
-        userData = resCreate.data;
-      } catch (err: any) {
-        if (err.code === '23505' || err.message?.includes('duplicate')) {
-          const resFetch = await supabase.from('users').select('*').eq('id', 'admin').single();
-          userData = resFetch.data;
-        } else {
-          throw err;
-        }
-      }
+      await supabase.from('users').insert({
+        id: 'admin',
+        balance: 15420,
+        settings: {},
+        history: [],
+        nickname: 'Игрок'
+      });
+      const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
+      userData = resCreate.data;
     }
 
     if (!userData) throw new Error('Не удалось загрузить аккаунт');
@@ -113,42 +103,119 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsAuthenticated(false);
   };
 
+  // 🔹 ИСПРАВЛЕНО: ждём ответа от БД + принудительное обновление
   const updateUser = async (updates: Partial<User>) => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
-    setUser({ ...currentUser, ...updates });
-    supabase.from('users').update(updates).eq('id', 'admin');
+    console.log('💾 [Update] Сохраняю изменения:', updates);
+    
+    const { error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', 'admin');
+    
+    if (error) {
+      console.error('❌ [Update] Ошибка сохранения:', error);
+      alert('Не удалось сохранить: ' + error.message);
+      return;
+    }
+
+    // Принудительно обновляем данные из БД
+    await refreshUserData();
+    console.log('✅ [Update] Успешно сохранено и обновлено');
   };
 
   const updateBalance = async (newBalance: number) => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
-    setUser(prev => prev ? { ...prev, balance: newBalance } : null);
-    await supabase.from('users').update({ balance: newBalance }).eq('id', 'admin');
+    console.log('💰 [Balance] Обновляю баланс:', newBalance);
+    
+    const { error } = await supabase
+      .from('users')
+      .update({ balance: newBalance })
+      .eq('id', 'admin');
+    
+    if (error) {
+      console.error('❌ [Balance] Ошибка:', error);
+      return;
+    }
+
+    await refreshUserData();
   };
 
   const addToHistory = async (bet: any) => {
+    console.log('📝 [History] Добавляю ставку:', bet);
+    
+    // Читаем текущую историю
     const res = await supabase.from('users').select('history').eq('id', 'admin').single();
+    if (res.error) {
+      console.error('❌ [History] Ошибка чтения:', res.error);
+      return;
+    }
+
     const currentHistory = res.data?.history || [];
     const newHistory = [bet, ...currentHistory];
-    setUser(prev => prev ? { ...prev, history: newHistory } : null);
-    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+
+    // Записываем обновлённую историю
+    const { error } = await supabase
+      .from('users')
+      .update({ history: newHistory })
+      .eq('id', 'admin');
+    
+    if (error) {
+      console.error('❌ [History] Ошибка записи:', error);
+      alert('Не удалось сохранить ставку: ' + error.message);
+      return;
+    }
+
+    await refreshUserData();
+    console.log('✅ [History] Ставка сохранена');
   };
 
   const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
+    console.log('🎯 [Status] Обновляю статус ставки:', betId, status);
+    
     const res = await supabase.from('users').select('history').eq('id', 'admin').single();
-    if (!res.data) return;
-    const newHistory = res.data.history.map((b: any) => b.id === betId ? { ...b, status } : b);
-    setUser(prev => prev ? { ...prev, history: newHistory } : null);
-    await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
+    if (res.error || !res.data) {
+      console.error('❌ [Status] Ошибка чтения:', res.error);
+      return;
+    }
+
+    const newHistory = res.data.history.map((b: any) => 
+      b.id === betId ? { ...b, status } : b
+    );
+
+    const { error } = await supabase
+      .from('users')
+      .update({ history: newHistory })
+      .eq('id', 'admin');
+    
+    if (error) {
+      console.error('❌ [Status] Ошибка записи:', error);
+      return;
+    }
+
+    await refreshUserData();
+    console.log('✅ [Status] Статус обновлён');
   };
 
   const setAvatar = async (avatarUrl: string) => {
+    console.log('🖼️ [Avatar] Сохраняю аватарку');
+    
     const currentUser = userRef.current;
     if (!currentUser) return;
+    
     const newSettings = { ...(currentUser.settings || {}), avatar: avatarUrl };
-    setUser(prev => prev ? { ...prev, settings: newSettings } : null);
-    supabase.from('users').update({ settings: newSettings }).eq('id', 'admin');
+    
+    const { error } = await supabase
+      .from('users')
+      .update({ settings: newSettings })
+      .eq('id', 'admin');
+    
+    if (error) {
+      console.error('❌ [Avatar] Ошибка:', error);
+      alert('Не удалось сохранить аватарку: ' + error.message);
+      return;
+    }
+
+    await refreshUserData();
+    console.log('✅ [Avatar] Аватарка сохранена');
   };
 
   return (
