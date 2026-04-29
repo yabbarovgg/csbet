@@ -33,7 +33,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
-  // 🔹 ИСПРАВЛЕНО: теперь параметр называется userData, а не data
   const normalizeUser = (userData: any): User => ({
     id: userData.id,
     nickname: userData.nickname || 'Игрок',
@@ -42,21 +41,28 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     history: userData.history || []
   });
 
+  // 🔹 ВОССТАНОВЛЕНИЕ СЕССИИ С ДИАГНОСТИКОЙ
   useEffect(() => {
     let isMounted = true;
     const checkSession = async () => {
+      console.log('🔍 [Auth] Проверка сессии при загрузке...');
       const saved = localStorage.getItem('csbet_auth');
+      
       if (saved === 'true') {
         try {
           const res = await supabase.from('users').select('*').eq('id', 'admin').single();
-          if (isMounted && res.data && !res.error) {
+          console.log('📥 [Auth] Ответ Supabase:', res);
+
+          if (res.error) {
+            console.error('❌ [Auth] Ошибка Supabase при загрузке:', res.error);
+            // НЕ очищаем localStorage при ошибке, чтобы пользователь мог войти заново
+          } else if (res.data && isMounted) {
+            console.log('✅ [Auth] Сессия успешно восстановлена!');
             setUser(normalizeUser(res.data));
             setIsAuthenticated(true);
-          } else if (isMounted) {
-            localStorage.removeItem('csbet_auth');
           }
-        } catch {
-          if (isMounted) localStorage.removeItem('csbet_auth');
+        } catch (err) {
+          console.error('❌ [Auth] Исключение при checkSession:', err);
         }
       }
       if (isMounted) setLoading(false);
@@ -69,12 +75,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
 
     let userData: any = null;
-
-    // 1. Пробуем найти существующего
     const resFind = await supabase.from('users').select('*').eq('id', 'admin').single();
     userData = resFind.data;
 
-    // 2. Если не нашли -> создаём
     if (!userData) {
       try {
         await supabase.from('users').insert({
@@ -87,7 +90,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
         userData = resCreate.data;
       } catch (err: any) {
-        // Если ошибка дубликата -> читаем существующего
         if (err.code === '23505' || err.message?.includes('duplicate')) {
           const resFetch = await supabase.from('users').select('*').eq('id', 'admin').single();
           userData = resFetch.data;
