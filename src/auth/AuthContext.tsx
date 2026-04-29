@@ -33,6 +33,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
+  // 🔹 Исправлено: корректная типизация аргумента
   const normalizeUser = ( any): User => ({
     id: data.id,
     nickname: data.nickname || 'Игрок',
@@ -41,16 +42,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     history: data.history || []
   });
 
-  // 🔹 Проверка сессии при старте (с защитой от зависания)
   useEffect(() => {
     let isMounted = true;
     const checkSession = async () => {
       const saved = localStorage.getItem('csbet_auth');
       if (saved === 'true') {
         try {
-          const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
-          if (isMounted && data && !error) {
-            setUser(normalizeUser(data));
+          const res = await supabase.from('users').select('*').eq('id', 'admin').single();
+          if (isMounted && res.data && !res.error) {
+            setUser(normalizeUser(res.data));
             setIsAuthenticated(true);
           } else if (isMounted) {
             localStorage.removeItem('csbet_auth');
@@ -65,15 +65,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return () => { isMounted = false; };
   }, []);
 
-  // 🔹 БУЛЕПРОФНАЯ АВТОРИЗАЦИЯ
+  // 🔹 ИСПРАВЛЕНО: явные переменные вместо запутанной деструктуризации
   const login = async (password: string) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
 
-    // 1. Пытаемся прочитать
-    let { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
+    let userData: any = null;
+
+    // 1. Пробуем найти существующего
+    const resFind = await supabase.from('users').select('*').eq('id', 'admin').single();
+    userData = resFind.data;
 
     // 2. Если не нашли -> создаём
-    if (!data) {
+    if (!userData) {
       try {
         await supabase.from('users').insert({
           id: 'admin',
@@ -82,22 +85,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           history: [],
           nickname: 'Игрок'
         });
-        const {  fresh } = await supabase.from('users').select('*').eq('id', 'admin').single();
-        data = fresh;
+        const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
+        userData = resCreate.data;
       } catch (err: any) {
-        // 🔹 Если Postgres выдал ошибку дубликата (23505) -> просто читаем существующего
+        // Если Postgres выдал ошибку дубликата -> просто читаем существующего
         if (err.code === '23505' || err.message?.includes('duplicate')) {
-          const {  existing } = await supabase.from('users').select('*').eq('id', 'admin').single();
-          data = existing;
+          const resFetch = await supabase.from('users').select('*').eq('id', 'admin').single();
+          userData = resFetch.data;
         } else {
           throw err;
         }
       }
     }
 
-    if (!data) throw new Error('Не удалось загрузить аккаунт');
+    if (!userData) throw new Error('Не удалось загрузить аккаунт');
     
-    setUser(normalizeUser(data));
+    setUser(normalizeUser(userData));
     localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
     setLoading(false);
@@ -124,17 +127,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const addToHistory = async (bet: any) => {
-    const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
-    const currentHistory = data?.history || [];
+    const res = await supabase.from('users').select('history').eq('id', 'admin').single();
+    const currentHistory = res.data?.history || [];
     const newHistory = [bet, ...currentHistory];
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
 
   const updateBetStatus = async (betId: string, status: 'won' | 'lost') => {
-    const { data } = await supabase.from('users').select('history').eq('id', 'admin').single();
-    if (!data) return;
-    const newHistory = data.history.map((b: any) => b.id === betId ? { ...b, status } : b);
+    const res = await supabase.from('users').select('history').eq('id', 'admin').single();
+    if (!res.data) return;
+    const newHistory = res.data.history.map((b: any) => b.id === betId ? { ...b, status } : b);
     setUser(prev => prev ? { ...prev, history: newHistory } : null);
     await supabase.from('users').update({ history: newHistory }).eq('id', 'admin');
   };
