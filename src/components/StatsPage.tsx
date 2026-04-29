@@ -1,261 +1,136 @@
 import React, { useState, useMemo } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { PlacedBet } from '../types';
-import { formatCompact } from '../utils/format';
-import { getTransactions } from '../hooks/transactions';
 
 interface StatsPageProps {
-  betHistory: PlacedBet[];
+  betHistory: any[];
   currentBalance: number;
   isDark: boolean;
   userId: string | null;
 }
 
-type Period = 'day' | 'week' | 'month' | 'year' | 'all';
+const StatsPage: React.FC<StatsPageProps> = ({ betHistory, currentBalance, isDark }) => {
+  const [filter, setFilter] = useState<'24h' | '7d' | '30d' | '1y' | 'all'>('all');
 
-const StatsPage: React.FC<StatsPageProps> = ({ betHistory, currentBalance, isDark, userId }) => {
-  const [period, setPeriod] = useState<Period>('all');
-  const textP = isDark ? 'text-white' : 'text-gray-900';
-  const textS = isDark ? 'text-gray-500' : 'text-gray-400';
-  const textM = isDark ? 'text-gray-600' : 'text-gray-500';
-  const bgC = isDark ? 'bg-[#141414] border-white/5' : 'bg-white border-gray-200';
-  const bgL = isDark ? 'bg-white/5' : 'bg-gray-100';
-  const bgLL = isDark ? 'bg-white/[0.02]' : 'bg-gray-50';
-  const border = isDark ? 'border-white/5' : 'border-gray-200';
+  const filteredStats = useMemo(() => {
+    if (!betHistory?.length) return null;
 
-  const filteredBets = useMemo(() => {
     const now = new Date();
-    return betHistory.filter((bet) => {
-      if (period === 'all') return true;
-      if (bet.timestamp.startsWith('Сегодня')) return period === 'day';
-      if (bet.timestamp.startsWith('Вчера')) return period !== 'day';
-      const tsParts = bet.timestamp.split(',');
-      if (tsParts.length < 2) return true;
-      const parts = tsParts[0].trim().split('.');
-      if (parts.length === 2) {
-        const diffDays = (now.getTime() - new Date(now.getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])).getTime()) / 86400000;
-        if (period === 'day') return diffDays <= 1;
-        if (period === 'week') return diffDays <= 7;
-        if (period === 'month') return diffDays <= 30;
-        if (period === 'year') return diffDays <= 365;
-      }
-      return true;
-    });
-  }, [betHistory, period]);
-
-  const stats = useMemo(() => {
-    const won = filteredBets.filter((b) => b.status === 'won');
-    const lost = filteredBets.filter((b) => b.status === 'lost');
-    const pending = filteredBets.filter((b) => b.status === 'pending');
-    const resolved = won.length + lost.length;
-    const winRate = resolved > 0 ? (won.length / resolved) * 100 : 0;
-    const totalStaked = filteredBets.reduce((a, b) => a + b.stake, 0);
-    const totalWon = won.reduce((a, b) => a + b.potentialWin, 0);
-    const totalLost = lost.reduce((a, b) => a + b.stake, 0);
-    const profit = totalWon - totalLost;
-    const profitPercent = totalStaked > 0 ? (profit / totalStaked) * 100 : 0;
-    const avgOdds = filteredBets.length > 0
-      ? filteredBets.reduce((a, b) => a + b.selections.reduce((x, s) => x * s.odds, 1), 0) / filteredBets.length
-      : 0;
-    const biggestWin = won.length > 0 ? Math.max(...won.map((b) => b.potentialWin)) : 0;
-    const biggestBet = filteredBets.length > 0 ? Math.max(...filteredBets.map((b) => b.stake)) : 0;
-    const resolvedAll = filteredBets.filter((b) => b.status !== 'pending');
-    const streak = resolvedAll.length === 0 ? { type: '—', count: 0 } : (() => {
-      const ct = resolvedAll[0].status; let c = 0;
-      for (const b of resolvedAll) { if (b.status === ct) c++; else break; }
-      return { type: ct === 'won' ? 'побед' : 'поражений', count: c };
+    const cutoff = (() => {
+      if (filter === '24h') return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      if (filter === '7d') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      if (filter === '30d') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      if (filter === '1y') return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      return new Date(0);
     })();
-    return { totalBets: filteredBets.length, wonBets: won.length, lostBets: lost.length, pendingBets: pending.length, winRate, totalStaked, totalWon, totalLost, profit, profitPercent, avgOdds, biggestWin, biggestBet, streak };
-  }, [filteredBets]);
 
-  // Chart: build from transactions + bets, starting from initial balance
-  const chartData = useMemo(() => {
-    const txs = userId ? getTransactions(userId) : [];
-    const initialBalance = 15420;
+    const filtered = betHistory.filter(b => new Date(b.date) >= cutoff);
+    
+    const totalBets = filtered.length;
+    const wins = filtered.filter(b => b.status === 'won').length;
+    const losses = filtered.filter(b => b.status === 'lost').length;
+    const pending = totalBets - wins - losses;
+    
+    const totalSpent = filtered.reduce((acc, b) => acc + b.stake, 0);
+    const totalWon = filtered.filter(b => b.status === 'won').reduce((acc, b) => acc + b.potentialWin, 0);
+    const profit = totalWon - totalSpent;
+    const winRate = totalBets ? Math.round((wins / totalBets) * 100) : 0;
 
-    // Collect all events sorted by time
-    type Event = { date: Date; amount: number; label: string; type: string };
-    const events: Event[] = [];
+    // График: последние 20 ставок из отфильтрованных
+    const recent = [...filtered].reverse().slice(0, 20);
+    let runningBalance = currentBalance;
+    const graphData = recent.map(b => {
+      if (b.status === 'won') runningBalance -= b.potentialWin;
+      else if (b.status === 'lost') runningBalance += b.stake;
+      else runningBalance += b.stake;
+      return { date: new Date(b.date), balance: runningBalance };
+    }).reverse();
 
-    // Bet events
-    const sortedBets = [...filteredBets].sort((a, b) => {
-      const ta = a.timestamp.split(',')[1]?.trim() || a.timestamp.split(',')[0]?.trim() || '';
-      const tb = b.timestamp.split(',')[1]?.trim() || b.timestamp.split(',')[0]?.trim() || '';
-      return ta.localeCompare(tb);
-    });
+    return { totalBets, wins, losses, pending, profit, winRate, filteredBets: filtered, graphData };
+  }, [betHistory, filter, currentBalance]);
 
-    for (const bet of sortedBets) {
-      events.push({ date: new Date(bet.timestamp), amount: -bet.stake, label: bet.timestamp, type: 'bet' });
-      if (bet.status === 'won') {
-        events.push({ date: new Date(bet.timestamp), amount: bet.potentialWin, label: bet.timestamp, type: 'win' });
-      }
-    }
-
-    // Loan events
-    for (const tx of txs) {
-      events.push({ date: new Date(tx.createdAt), amount: tx.amount, label: tx.description.split(' ')[0] || tx.createdAt, type: tx.type });
-    }
-
-    events.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    let running = initialBalance;
-    const data: Array<{ label: string; balance: number }> = [{ label: 'Старт', balance: initialBalance }];
-
-    for (const ev of events) {
-      running += ev.amount;
-      data.push({ label: ev.label, balance: Math.round(running) });
-    }
-
-    return data;
-  }, [filteredBets, userId]);
-
-  const StatCard = ({ icon, label, value, subValue }: { icon: string; label: string; value: string; subValue?: string }) => (
-    <div className={`${bgC} rounded-2xl p-4 border`}>
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-lg">{icon}</span>
-        <span className={`text-xs font-medium ${textS}`}>{label}</span>
+  if (!filteredStats) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="text-6xl mb-4">📊</div>
+        <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Нет статистики</h3>
+        <p className="text-gray-500">Сделай ставку, чтобы увидеть данные</p>
       </div>
-      <div className={`text-lg font-black ${textP} leading-tight`}>{value}</div>
-      {subValue && <div className={`text-xs mt-1 ${textM}`}>{subValue}</div>}
-    </div>
-  );
+    );
+  }
 
-  const isEmpty = filteredBets.length === 0;
+  const textP = isDark ? 'text-white' : 'text-gray-900';
+  const textS = isDark ? 'text-gray-400' : 'text-gray-500';
+  const bgCard = isDark ? 'bg-[#141414] border-white/5' : 'bg-white border-gray-200';
+  const filters: { key: typeof filter; label: string }[] = [
+    { key: '24h', label: '24ч' }, { key: '7d', label: '7д' },
+    { key: '30d', label: '30д' }, { key: '1y', label: '1г' }, { key: 'all', label: 'Все' }
+  ];
 
   return (
-    <div className="animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">📊</span>
-          <div>
-            <h1 className={`text-xl font-black ${textP}`}>Статистика ставок</h1>
-            <p className={`text-xs ${textS}`}>Подробная аналитика вашей игры</p>
-          </div>
+    <div className="space-y-6">
+      <div className="flex gap-2 overflow-x-auto pb-2">
+        {filters.map(f => (
+          <button key={f.key} onClick={() => setFilter(f.key)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap ${filter === f.key ? 'bg-amber-400/20 text-amber-400 border border-amber-400/30' : `${isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-100 text-gray-500'} border border-transparent`}`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard title="Всего ставок" value={filteredStats.totalBets} isDark={isDark} />
+        <StatCard title="Винрейт" value={`${filteredStats.winRate}%`} isDark={isDark} color={filteredStats.winRate >= 50 ? 'text-green-400' : 'text-red-400'} />
+        <StatCard title="Прибыль" value={`${filteredStats.profit >= 0 ? '+' : ''}${filteredStats.profit} ₽`} isDark={isDark} color={filteredStats.profit >= 0 ? 'text-green-400' : 'text-red-400'} />
+        <StatCard title="Баланс" value={`${currentBalance} ₽`} isDark={isDark} />
+      </div>
+
+      <div className={`p-6 rounded-2xl border ${bgCard}`}>
+        <h3 className={`text-lg font-bold mb-4 ${textP}`}>Динамика баланса</h3>
+        <div className="h-40 flex items-end justify-between gap-1">
+          {filteredStats.graphData.map((p, i) => {
+            const max = Math.max(...filteredStats.graphData.map(d => d.balance), 1000);
+            const h = Math.max(4, (p.balance / max) * 100);
+            return (
+              <div key={i} className="flex-1 flex flex-col justify-end group relative">
+                <div className={`w-full rounded-t transition-all ${p.balance >= currentBalance ? 'bg-green-500' : 'bg-red-500'}`} style={{ height: `${h}%` }} />
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                  {p.balance} ₽
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className={`flex items-center gap-1 ${bgL} rounded-xl p-1 border ${border}`}>
-          {[{ key: 'day' as Period, label: '24ч' }, { key: 'week' as Period, label: '7д' }, { key: 'month' as Period, label: '30д' }, { key: 'year' as Period, label: '1г' }, { key: 'all' as Period, label: 'Всё' }].map((p) => (
-            <button key={p.key} onClick={() => setPeriod(p.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${period === p.key ? 'bg-amber-400/20 text-amber-400' : isDark ? `${textS} hover:text-white hover:bg-white/5` : `${textS} hover:text-gray-900 hover:bg-gray-200`}`}>
-              {p.label}
-            </button>
+      </div>
+
+      <div className={`p-6 rounded-2xl border ${bgCard}`}>
+        <h3 className={`text-lg font-bold mb-4 ${textP}`}>История ставок</h3>
+        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+          {filteredStats.filteredBets.map(bet => (
+            <div key={bet.id} className={`p-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/5' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="flex justify-between text-xs mb-1">
+                <span className={textS}>{new Date(bet.date).toLocaleDateString('ru-RU')} {new Date(bet.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${bet.status === 'won' ? 'bg-green-400/10 text-green-400' : bet.status === 'lost' ? 'bg-red-400/10 text-red-400' : 'bg-yellow-400/10 text-yellow-400'}`}>
+                  {bet.status === 'won' ? 'Выигрыш' : bet.status === 'lost' ? 'Проигрыш' : 'В игре'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className={`text-sm font-medium ${textP}`}>{bet.selections.map(s => s.team).join(' • ')}</span>
+                <span className={`text-sm font-bold ${bet.status === 'won' ? 'text-green-400' : 'text-red-400'}`}>
+                  {bet.status === 'won' ? `+${bet.potentialWin}` : `-${bet.stake}`} ₽
+                </span>
+              </div>
+            </div>
           ))}
         </div>
       </div>
-
-      {isEmpty ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className={`w-20 h-20 ${bgL} rounded-3xl flex items-center justify-center mb-4`}><span className="text-4xl">📈</span></div>
-          <h3 className={`text-sm font-semibold mb-1 ${textS}`}>Нет данных</h3>
-          <p className={`text-xs ${textM}`}>За выбранный период ставок не найдено</p>
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-            <div className="bg-gradient-to-br from-amber-400/10 to-yellow-400/10 rounded-2xl p-5 border border-amber-400/10">
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Текущий баланс</span>
-              <div className={`text-2xl sm:text-3xl font-black ${textP} mt-1 tabular-nums`}>{formatCompact(currentBalance)}</div>
-              <div className={`text-xs mt-1 font-medium ${stats.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {stats.profit >= 0 ? '+' : ''}{formatCompact(stats.profit)} ({stats.profitPercent >= 0 ? '+' : ''}{stats.profitPercent.toFixed(1)}%)
-              </div>
-            </div>
-            <div className={`${bgC} rounded-2xl p-5 border`}>
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Всего ставок</span>
-              <div className={`text-3xl font-black ${textP} mt-1`}>{stats.totalBets}</div>
-              <div className={`text-xs mt-1 ${textM}`}>{stats.wonBets}W / {stats.lostBets}L / {stats.pendingBets}P</div>
-            </div>
-            <div className={`${bgC} rounded-2xl p-5 border`}>
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Винрейт</span>
-              <div className={`text-3xl font-black mt-1 ${stats.winRate >= 50 ? 'text-green-400' : stats.winRate >= 40 ? 'text-amber-400' : 'text-red-400'}`}>
-                {stats.winRate.toFixed(1)}%
-              </div>
-              <div className={`text-xs mt-1 ${textM}`}>Серия: {stats.streak.count} {stats.streak.type}</div>
-            </div>
-          </div>
-
-          <div className={`${bgC} rounded-2xl p-5 border mb-6`}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className={`text-sm font-bold ${textP}`}>График баланса</h3>
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-amber-400 rounded-full" />
-                <span className={`text-xs ${textS}`}>Баланс</span>
-              </div>
-            </div>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#FBBF24" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#FBBF24" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#ffffff10' : '#e5e7eb'} vertical={false} />
-                  <XAxis dataKey="label" stroke={isDark ? '#555' : '#999'} tick={{ fill: isDark ? '#888' : '#666', fontSize: 11 }} tickLine={false} axisLine={false} />
-                  <YAxis stroke={isDark ? '#555' : '#999'} tick={{ fill: isDark ? '#888' : '#666', fontSize: 11 }} tickLine={false} axisLine={false}
-                    tickFormatter={(v: number) => {
-                      const a = Math.abs(v);
-                      if (a >= 1e9) return `${(v/1e9).toFixed(1)}B`;
-                      if (a >= 1e6) return `${(v/1e6).toFixed(1)}M`;
-                      if (a >= 1e3) return `${(v/1e3).toFixed(0)}к`;
-                      return v.toString();
-                    }} />
-                  <Tooltip contentStyle={{ backgroundColor: isDark ? '#1a1a1a' : '#fff', border: `1px solid ${isDark ? '#ffffff15' : '#e5e7eb'}`, borderRadius: '12px', color: isDark ? '#fff' : '#111', fontSize: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
-                    formatter={(value: unknown) => [`${Number(value).toLocaleString('ru-RU')} ₽`, 'Баланс']} />
-                  <Area type="monotone" dataKey="balance" stroke="#FBBF24" strokeWidth={2} fill="url(#colorBal)"
-                    dot={{ fill: '#FBBF24', strokeWidth: 2, r: 3 }} activeDot={{ fill: '#FBBF24', strokeWidth: 0, r: 5 }} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <StatCard icon="💰" label="Поставлено" value={formatCompact(stats.totalStaked)} />
-            <StatCard icon="🏆" label="Выиграно" value={formatCompact(stats.totalWon)} subValue={`Сред. коэф: ${stats.avgOdds.toFixed(2)}`} />
-            <StatCard icon="📉" label="Проиграно" value={formatCompact(stats.totalLost)} />
-            <StatCard icon={stats.biggestWin > 0 ? '🔥' : '—'} label="Макс. выигрыш" value={stats.biggestWin > 0 ? formatCompact(stats.biggestWin) : '—'}
-              subValue={stats.biggestBet > 0 ? `Макс. ставка: ${formatCompact(stats.biggestBet)}` : ''} />
-          </div>
-
-          <div className={`${bgC} rounded-2xl border overflow-hidden`}>
-            <div className={`px-5 py-4 border-b ${border}`}><h3 className={`text-sm font-bold ${textP}`}>Последние ставки</h3></div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className={`border-b ${border}`}>
-                    <th className={`text-left text-xs font-medium ${textS} uppercase tracking-wider px-5 py-3`}>Время</th>
-                    <th className={`text-left text-xs font-medium ${textS} uppercase tracking-wider px-5 py-3`}>Исход</th>
-                    <th className={`text-left text-xs font-medium ${textS} uppercase tracking-wider px-5 py-3`}>Ставка</th>
-                    <th className={`text-left text-xs font-medium ${textS} uppercase tracking-wider px-5 py-3`}>Коэф.</th>
-                    <th className={`text-right text-xs font-medium ${textS} uppercase tracking-wider px-5 py-3`}>Результат</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredBets.slice(0, 10).map((bet) => {
-                    const totalOdds = bet.selections.reduce((a, s) => a * s.odds, 1);
-                    return (
-                      <tr key={bet.id} className={`border-b ${border} last:border-b-0 ${bgLL}`}>
-                        <td className={`px-5 py-3 text-xs ${textS}`}>{bet.timestamp}</td>
-                        <td className="px-5 py-3">{bet.selections.map((sel, idx) => (
-                          <div key={idx} className={`text-xs ${textP} font-medium`}>{sel.team}</div>
-                        ))}</td>
-                        <td className={`px-5 py-3 text-xs font-medium tabular-nums ${textP}`}>{bet.stake.toLocaleString('ru-RU')} ₽</td>
-                        <td className="px-5 py-3"><span className="text-xs font-bold text-amber-400 tabular-nums">{totalOdds.toFixed(2)}</span></td>
-                        <td className="px-5 py-3 text-right">
-                          <span className={`text-xs font-bold tabular-nums ${bet.status === 'won' ? 'text-green-400' : bet.status === 'lost' ? 'text-red-400' : 'text-amber-400'}`}>
-                            {bet.status === 'won' ? `+${bet.potentialWin.toLocaleString('ru-RU')} ₽` : bet.status === 'lost' ? `-${bet.stake.toLocaleString('ru-RU')} ₽` : 'В игре'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 };
+
+const StatCard = ({ title, value, isDark, color }: { title: string; value: string | number; isDark: boolean; color?: string }) => (
+  <div className={`p-4 rounded-2xl border ${isDark ? 'bg-[#141414] border-white/5' : 'bg-white border-gray-200'}`}>
+    <div className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{title}</div>
+    <div className={`text-xl font-black ${color || (isDark ? 'text-white' : 'text-gray-900')}`}>{value}</div>
+  </div>
+);
 
 export default StatsPage;
