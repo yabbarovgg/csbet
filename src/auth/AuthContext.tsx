@@ -41,45 +41,62 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     history: data.history || []
   });
 
+  // 🔹 Проверка сессии при старте (с защитой от зависания)
   useEffect(() => {
+    let isMounted = true;
     const checkSession = async () => {
       const saved = localStorage.getItem('csbet_auth');
       if (saved === 'true') {
-        const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
-        if (data && !error) {
-          setUser(normalizeUser(data));
-          setIsAuthenticated(true);
-        } else {
-          localStorage.removeItem('csbet_auth');
+        try {
+          const { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
+          if (isMounted && data && !error) {
+            setUser(normalizeUser(data));
+            setIsAuthenticated(true);
+          } else if (isMounted) {
+            localStorage.removeItem('csbet_auth');
+          }
+        } catch {
+          if (isMounted) localStorage.removeItem('csbet_auth');
         }
       }
-      setLoading(false);
+      if (isMounted) setLoading(false);
     };
     checkSession();
+    return () => { isMounted = false; };
   }, []);
 
-  // 🔹 ИСПРАВЛЕНО: используем upsert вместо insert. Ошибка дубликата больше невозможна.
+  // 🔹 БУЛЕПРОФНАЯ АВТОРИЗАЦИЯ
   const login = async (password: string) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
 
-    // 1. Пытаемся получить существующего
+    // 1. Пытаемся прочитать
     let { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
 
-    // 2. Если нет → безопасно создаём через upsert (не крашится при дубликате)
+    // 2. Если не нашли -> создаём
     if (!data) {
-      await supabase.from('users').upsert({
-        id: 'admin',
-        balance: 15420,
-        settings: {},
-        history: [],
-        nickname: 'Игрок'
-      }, { onConflict: 'id' });
-
-      // Забираем строку сразу после создания
-      const { data: fresh } = await supabase.from('users').select('*').eq('id', 'admin').single();
-      data = fresh;
+      try {
+        await supabase.from('users').insert({
+          id: 'admin',
+          balance: 15420,
+          settings: {},
+          history: [],
+          nickname: 'Игрок'
+        });
+        const {  fresh } = await supabase.from('users').select('*').eq('id', 'admin').single();
+        data = fresh;
+      } catch (err: any) {
+        // 🔹 Если Postgres выдал ошибку дубликата (23505) -> просто читаем существующего
+        if (err.code === '23505' || err.message?.includes('duplicate')) {
+          const {  existing } = await supabase.from('users').select('*').eq('id', 'admin').single();
+          data = existing;
+        } else {
+          throw err;
+        }
+      }
     }
 
+    if (!data) throw new Error('Не удалось загрузить аккаунт');
+    
     setUser(normalizeUser(data));
     localStorage.setItem('csbet_auth', 'true');
     setIsAuthenticated(true);
@@ -95,8 +112,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const updateUser = async (updates: Partial<User>) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
-    const updated = { ...currentUser, ...updates };
-    setUser(updated);
+    setUser({ ...currentUser, ...updates });
     supabase.from('users').update(updates).eq('id', 'admin');
   };
 
