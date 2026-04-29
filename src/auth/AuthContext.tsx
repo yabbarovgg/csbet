@@ -33,13 +33,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
-  // 🔹 Исправлено: корректная типизация аргумента
-  const normalizeUser = ( any): User => ({
-    id: data.id,
-    nickname: data.nickname || 'Игрок',
-    balance: data.balance ?? 0,
-    settings: data.settings || { showGradient: true, avatar: null },
-    history: data.history || []
+  // 🔹 ИСПРАВЛЕНО: теперь параметр называется userData, а не data
+  const normalizeUser = (userData: any): User => ({
+    id: userData.id,
+    nickname: userData.nickname || 'Игрок',
+    balance: userData.balance ?? 0,
+    settings: userData.settings || { showGradient: true, avatar: null },
+    history: userData.history || []
   });
 
   useEffect(() => {
@@ -65,7 +65,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return () => { isMounted = false; };
   }, []);
 
-  // 🔹 ИСПРАВЛЕНО: явные переменные вместо запутанной деструктуризации
   const login = async (password: string) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
 
@@ -88,7 +87,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         const resCreate = await supabase.from('users').select('*').eq('id', 'admin').single();
         userData = resCreate.data;
       } catch (err: any) {
-        // Если Postgres выдал ошибку дубликата -> просто читаем существующего
+        // Если ошибка дубликата -> читаем существующего
         if (err.code === '23505' || err.message?.includes('duplicate')) {
           const resFetch = await supabase.from('users').select('*').eq('id', 'admin').single();
           userData = resFetch.data;
