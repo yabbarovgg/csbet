@@ -33,7 +33,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
-  const normalizeUser = (data: any): User => ({
+  const normalizeUser = ( any): User => ({
     id: data.id,
     nickname: data.nickname || 'Игрок',
     balance: data.balance ?? 0,
@@ -58,41 +58,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     checkSession();
   }, []);
 
+  // 🔹 ИСПРАВЛЕНО: используем upsert вместо insert. Ошибка дубликата больше невозможна.
   const login = async (password: string) => {
     if (password !== import.meta.env.VITE_MASTER_PASSWORD) throw new Error('Неверный пароль');
 
-    // 1. Пытаемся найти пользователя
+    // 1. Пытаемся получить существующего
     let { data, error } = await supabase.from('users').select('*').eq('id', 'admin').single();
 
-    // 2. Если не нашли или ошибка -> Пытаемся создать
-    if (error || !data) {
-      console.log('🆕 Аккаунт не найден. Создаю...');
-      const {  newUser, error: insertError } = await supabase
-        .from('users')
-        .insert({
-          id: 'admin',
-          balance: 15420,
-          settings: { showGradient: true, avatar: null },
-          history: [],
-          nickname: 'Игрок'
-        })
-        .select()
-        .single();
+    // 2. Если нет → безопасно создаём через upsert (не крашится при дубликате)
+    if (!data) {
+      await supabase.from('users').upsert({
+        id: 'admin',
+        balance: 15420,
+        settings: {},
+        history: [],
+        nickname: 'Игрок'
+      }, { onConflict: 'id' });
 
-      // 🔹 3. Если при создании ошибка "Дубликат ключа" (23505) -> Значит он УЖЕ есть.
-      // Просто загружаем его и не ломаем сайт.
-      if (insertError) {
-        if (insertError.code === '23505' || insertError.message.includes('duplicate')) {
-          console.log('⚠️ Аккаунт уже существует (дубликат). Загружаю существующий.');
-          const {  existing } = await supabase.from('users').select('*').eq('id', 'admin').single();
-          if (existing) data = existing;
-          else throw insertError;
-        } else {
-          throw insertError;
-        }
-      } else {
-        data = newUser;
-      }
+      // Забираем строку сразу после создания
+      const { data: fresh } = await supabase.from('users').select('*').eq('id', 'admin').single();
+      data = fresh;
     }
 
     setUser(normalizeUser(data));
