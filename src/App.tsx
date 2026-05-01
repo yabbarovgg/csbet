@@ -13,7 +13,6 @@ import useLoans from './hooks/useLoans';
 import { BetSelection, PlacedBet, Match } from './types';
 import { liveMatches as initialLive, upcomingMatches as initialUpcoming, tournaments } from './data/matches';
 
-// --- Вспомогательные функции ---
 function jitter(odds: number, pct = 0.03): number {
   return Math.max(1.01, Math.round((odds + odds * pct * (Math.random() * 2 - 1)) * 100) / 100);
 }
@@ -40,7 +39,16 @@ function formatRelativeTime(match: Match): string {
 }
 
 const AppContent: React.FC = () => {
-  const { user, isAuthenticated, login, register, updateBalance, addToHistory, updateBetStatus } = useAuth();
+  const auth = useAuth();
+  const user = auth.user;
+  const isAuthenticated = auth.isAuthenticated;
+  const login = auth.login;
+  const register = () => {}; // Не используется
+  const updateBalance = auth.updateBalance;
+  const addToHistory = auth.addToHistory;
+  const updateBetStatus = auth.updateBetStatus;
+  const setNickname = auth.setNickname;
+  const loading = auth.loading;
   
   const [isDark, setIsDark] = useState(true);
   const [page, setPage] = useState<'home' | 'stats'>('home');
@@ -57,13 +65,11 @@ const AppContent: React.FC = () => {
   const [showDeposit, setShowDeposit] = useState(false);
   const [depositStep, setDepositStep] = useState<'modal' | 'loan' | 'card' | 'promo' | null>(null);
   
-  // Админ панель
   const [showAdmin, setShowAdmin] = useState(false);
   const [newMatch, setNewMatch] = useState({ team1: '', team2: '', tournament: 'Other', date: 'Сегодня', time: '', odds1: '1.80', odds2: '1.90' });
 
   const userId = user?.id ? String(user.id) : null;
   const { activeLoan, hasEverHadLoan, totalActiveDebt, notifications, unreadCount, takeLoan, repayOldest, markAllRead, clearNotifications } = useLoans(userId);
-
   const [liveData, setLiveData] = useState<Match[]>(initialLive.map(m => ({ ...m, _simTime: 0 })));
   const [upcomingData, setUpcomingData] = useState<Match[]>(initialUpcoming);
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
@@ -76,7 +82,6 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('resize', h);
   }, []);
 
-  // Симуляция матчей
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => prev.map(m => {
@@ -92,7 +97,6 @@ const AppContent: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Обновление коэффициентов
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => prev.map(m => ({
@@ -114,7 +118,6 @@ const AppContent: React.FC = () => {
 
   const handleRemoveSelection = useCallback((matchId: string) => setSelections(prev => prev.filter(s => s.matchId !== matchId)), []);
 
-  // Оформление ставки
   const handlePlaceBet = useCallback(async (stake: number) => {
     const totalOdds = selections.reduce((a, s) => a * s.odds, 1);
     const potentialWin = Math.round(stake * totalOdds * 100) / 100;
@@ -142,7 +145,6 @@ const AppContent: React.FC = () => {
     timeoutsRef.current.push(t);
   }, [selections, balance, updateBalance, addToHistory, updateBetStatus]);
 
-  // Займы
   const handleTakeLoan = async (amount: number, days: number) => {
     if (!user) return;
     takeLoan(amount, days);
@@ -166,7 +168,6 @@ const AppContent: React.FC = () => {
     }
   };
 
-  // Добавление матча (Админ)
   const addMatch = () => {
     if (!newMatch.team1 || !newMatch.team2 || !newMatch.time) return;
     const id = `m-${Date.now()}`;
@@ -191,7 +192,6 @@ const AppContent: React.FC = () => {
     setShowAdmin(false);
   };
 
-  // Фильтрация матчей
   const filterMatches = (matches: Match[]) => {
     let res = matches;
     if (selectedMatchId) return res.filter(m => m.id === selectedMatchId);
@@ -215,6 +215,14 @@ const AppContent: React.FC = () => {
     />
   ) : null, [userId, notifications, unreadCount, markAllRead, clearNotifications, isDark]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <div className="text-amber-400 font-bold text-xl animate-pulse">Загрузка...</div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) return <AuthPage onLogin={login} onRegister={register} />;
 
   return (
@@ -228,7 +236,6 @@ const AppContent: React.FC = () => {
         notifications={notificationsComponent}
       />
 
-      {/* Модальные окна */}
       {showDeposit && depositStep === 'modal' && (
         <DepositModal
           isDark={isDark}
@@ -257,7 +264,6 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* Админ панель */}
       {user?.id === 'admin' && (
         <button onClick={() => setShowAdmin(!showAdmin)} className="fixed bottom-20 right-4 z-50 w-10 h-10 bg-gray-800 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-gray-700 transition-colors">⚙️</button>
       )}
@@ -283,7 +289,6 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* Мобильные кнопки */}
       <div className="lg:hidden fixed bottom-4 right-4 z-50 flex flex-col gap-3">
         <button onClick={() => setMobileMenu(mobileMenu === 'left' ? null : 'left')} className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg ${isDark ? 'bg-[#1a1a1a] text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -301,7 +306,6 @@ const AppContent: React.FC = () => {
       )}
 
       <div className="flex">
-        {/* Левое меню */}
         <div className={`lg:static fixed top-[88px] left-0 bottom-0 z-40 transition-transform duration-300 ${mobileMenu === 'left' ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           <TournamentNav
             tournaments={tournaments}
@@ -314,7 +318,6 @@ const AppContent: React.FC = () => {
           />
         </div>
 
-        {/* Основной контент */}
         <main className="flex-1 min-w-0 px-4 lg:px-6 py-6 pb-24 lg:pb-6">
           <div className="flex items-center gap-2 mb-6 overflow-x-auto">
             <button onClick={() => setPage('home')} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${page === 'home' ? 'bg-amber-400/10 text-amber-400 border border-amber-400/20' : isDark ? 'text-gray-500 hover:text-white hover:bg-white/5 border border-transparent' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100 border border-transparent'}`}>🎮 Матчи</button>
@@ -330,7 +333,6 @@ const AppContent: React.FC = () => {
                 </div>
               )}
               
-              {/* Секция LIVE */}
               <MatchesSection 
                 title="LIVE" 
                 icon={<span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span><span className="text-red-400 font-bold text-xs">LIVE</span></span>} 
@@ -340,7 +342,6 @@ const AppContent: React.FC = () => {
                 isDark={isDark} 
               />
               
-              {/* Предстоящие матчи */}
               <MatchesSection 
                 title="Предстоящие матчи" 
                 icon="📅" 
@@ -365,7 +366,6 @@ const AppContent: React.FC = () => {
           )}
         </main>
 
-        {/* Правое меню */}
         <div className={`lg:static fixed top-[88px] right-0 bottom-0 z-40 transition-transform duration-300 ${mobileMenu === 'right' ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
           <Sidebar
             selections={selections}
